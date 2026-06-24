@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "project": "python-api",
+  "description": "Ground truth for the intentionally vulnerable CyberAI Python benchmark.",
+  "findings": [
+    {
+      "id": "PY-SQLI-001",
+      "category": "sast",
+      "severity": "critical",
+      "bug_class": "sql_injection",
+      "file": "app/main.py",
+      "line_hint": "search_users",
+      "expected_tools": ["semgrep"],
+      "description": "Query parameter q is interpolated directly into a SQL query."
+    },
+    {
+      "id": "PY-CMD-001",
+      "category": "sast",
+      "severity": "critical",
+      "bug_class": "command_injection",
+      "file": "app/main.py",
+      "line_hint": "run_diagnostic",
+      "expected_tools": ["semgrep"],
+      "description": "User-controlled command is executed with shell=True."
+    },
+    {
+      "id": "PY-PATH-001",
+      "category": "sast",
+      "severity": "high",
+      "bug_class": "path_traversal",
+      "file": "app/main.py",
+      "line_hint": "download_file",
+      "expected_tools": ["semgrep"],
+      "description": "User-controlled filename is joined into a filesystem path without safe normalization."
+    },
+    {
+      "id": "PY-SSRF-001",
+      "category": "sast",
+      "severity": "high",
+      "bug_class": "ssrf",
+      "file": "app/main.py",
+      "line_hint": "fetch_url",
+      "expected_tools": ["semgrep"],
+      "description": "User-controlled URL is fetched server-side."
+    },
+    {
+      "id": "PY-IDOR-001",
+      "category": "sast",
+      "severity": "high",
+      "bug_class": "idor",
+      "file": "app/main.py",
+      "line_hint": "read_invoice",
+      "expected_tools": ["future-investigate"],
+      "description": "Authenticated user identity is decoded but not authorized against requested user_id."
+    },
+    {
+      "id": "PY-REDIRECT-001",
+      "category": "sast",
+      "severity": "medium",
+      "bug_class": "open_redirect",
+      "file": "app/main.py",
+      "line_hint": "redirect",
+      "expected_tools": ["semgrep"],
+      "description": "User-controlled next parameter is passed to RedirectResponse."
+    },
+    {
+      "id": "PY-SSTI-001",
+      "category": "sast",
+      "severity": "high",
+      "bug_class": "server_side_template_injection",
+      "file": "app/main.py",
+      "line_hint": "render_template",
+      "expected_tools": ["semgrep"],
+      "description": "User-controlled template text is compiled with Jinja2 Template."
+    },
+    {
+      "id": "PY-YAML-001",
+      "category": "sast",
+      "severity": "critical",
+      "bug_class": "unsafe_deserialization",
+      "file": "app/main.py",
+      "line_hint": "parse_yaml",
+      "expected_tools": ["semgrep"],
+      "description": "Untrusted request body is parsed with yaml.Loader."
+    },
+    {
+      "id": "PY-PICKLE-001",
+      "category": "sast",
+      "severity": "critical",
+      "bug_class": "unsafe_deserialization",
+      "file": "app/main.py",
+      "line_hint": "parse_pickle",
+      "expected_tools": ["semgrep"],
+      "description": "Untrusted request body reaches pickle.loads."
+    },
+    {
+      "id": "PY-COOKIE-001",
+      "category": "sast",
+      "severity": "medium",
+      "bug_class": "insecure_cookie",
+      "file": "app/main.py",
+      "line_hint": "set_session_cookie",
+      "expected_tools": ["semgrep"],
+      "description": "Session cookie is set without secure, httponly, or samesite controls."
+    },
+    {
+      "id": "PY-JWT-001",
+      "category": "sast",
+      "severity": "critical",
+      "bug_class": "jwt_verification_bypass",
+      "file": "app/auth.py",
+      "line_hint": "decode_user_token",
+      "expected_tools": ["semgrep"],
+      "description": "JWT decode disables signature verification and allows none algorithm."
+    },
+    {
+      "id": "PY-SECRET-001",
+      "category": "secrets",
+      "severity": "critical",
+      "bug_class": "hardcoded_secret",
+      "file": "app/config.py",
+      "line_hint": "AWS_ACCESS_KEY_ID",
+      "expected_tools": ["gitleaks", "trivy"],
+      "description": "Fake AWS access key fixture should be detected and redacted."
+    },
+    {
+      "id": "PY-SECRET-002",
+      "category": "secrets",
+      "severity": "critical",
+      "bug_class": "hardcoded_private_key",
+      "file": "secrets/fake_id_rsa",
+      "line_hint": "BEGIN RSA PRIVATE KEY",
+      "expected_tools": ["gitleaks"],
+      "description": "Fake private key fixture should be detected and redacted."
+    },
+    {
+      "id": "PY-SCA-001",
+      "category": "sca",
+      "severity": "high",
+      "bug_class": "vulnerable_dependency",
+      "file": "requirements.txt",
+      "line_hint": "PyYAML==5.3.1",
+      "expected_tools": ["trivy"],
+      "description": "Known vulnerable dependencies are pinned for SCA coverage."
+    },
+    {
+      "id": "PY-DOCKER-001",
+      "category": "iac",
+      "severity": "high",
+      "bug_class": "unsafe_docker_build",
+      "file": "Dockerfile",
+      "line_hint": "curl -fsSL",
+      "expected_tools": ["trivy", "future-hadolint"],
+      "description": "Docker build downloads and executes a remote script."
+    },
+    {
+      "id": "PY-K8S-001",
+      "category": "iac",
+      "severity": "critical",
+      "bug_class": "privileged_container",
+      "file": "k8s/deployment.yaml",
+      "line_hint": "privileged: true",
+      "expected_tools": ["trivy", "semgrep"],
+      "description": "Kubernetes container runs privileged with host root mounted."
+    },
+    {
+      "id": "PY-TF-001",
+      "category": "iac",
+      "severity": "high",
+      "bug_class": "public_cloud_resource",
+      "file": "terraform/main.tf",
+      "line_hint": "0.0.0.0/0",
+      "expected_tools": ["trivy", "future-checkov"],
+      "description": "Terraform security group opens SSH to the world."
+    },
+    {
+      "id": "PY-CI-001",
+      "category": "iac",
+      "severity": "high",
+      "bug_class": "dangerous_ci",
+      "file": ".github/workflows/ci.yml",
+      "line_hint": "pull_request_target",
+      "expected_tools": ["future-zizmor"],
+      "description": "GitHub Actions workflow uses pull_request_target with broad permissions and untrusted checkout."
+    }
+  ]
+}

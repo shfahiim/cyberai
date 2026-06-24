@@ -1,0 +1,20 @@
+name: vulnerable-ci
+
+on:
+  pull_request_target:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions: write-all
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - name: Dangerous pull request script
+        env:
+          # FAKE BENCHMARK SECRET: intentionally unsafe fixture.
+          DEPLOY_TOKEN: ghp_000000000000000000000000000000000000
+        run: |
+          echo "$DEPLOY_TOKEN" | sed 's/./*/g'
+          bash ./scripts/pr-check.sh

@@ -1,0 +1,1 @@
+This file is safe. The file download route is intentionally unsafe because it allows traversal outside this directory.

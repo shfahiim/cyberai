@@ -1,0 +1,77 @@
+# cyberai configuration. Drop this into your repo as `.cyberai.yaml` and
+# tune as needed. Anything you omit falls back to a sensible default.
+#
+# Schema reference: internal/config/config.go. CLI flags always win over
+# this file (--severity, --only, --no-llm, --baseline, --output, --format).
+#
+# A minimal config is fine — the LLM router (if enabled) decides which
+# scanners and rules to run based on a quick look at your project.
+
+# --- Scanners --------------------------------------------------------------
+# Empty list = let the router decide (or run all if --no-llm).
+# Options: sast, secrets, sca, iac, license, docker, cicd.
+scanners: []
+
+# Never run these scanners even if the router wants them. Useful for noisy
+# tools or licensed dependency scanning in monorepos where you've accepted
+# the noise elsewhere.
+disabled_scanners: []
+
+# --- Severity filter -------------------------------------------------------
+# Hide findings below this level. critical > high > medium > low > info.
+# Default: low (show everything).
+severity_threshold: low
+
+# --- Ignore patterns -------------------------------------------------------
+# Doublestar globs. A finding on a matching file path is suppressed.
+ignore_patterns:
+  - "**/node_modules/**"
+  - "**/vendor/**"
+  - "**/.git/**"
+  - "**/dist/**"
+  - "**/build/**"
+  - "**/*.min.js"
+  - "**/*.test.go"
+  - "**/*_test.go"
+  - "**/testdata/**"
+
+# --- Output -----------------------------------------------------------------
+# Report formats. Options: sarif, json, markdown, html, terminal.
+# Default: all five. The output path is relative to the project root unless
+# absolute.
+output:
+  formats:
+    - sarif
+    - json
+    - markdown
+    - html
+    - terminal
+  path: cyberai-reports
+
+# --- LLM --------------------------------------------------------------------
+# Set GEMINI_API_KEY in your environment to enable the router + summarizer.
+# With --no-llm or --ci, the LLM is skipped regardless.
+llm:
+  # true  = force-enable LLM
+  # false = force-disable LLM (equivalent to --no-llm)
+  # null  = follow CLI flags (default)
+  enabled: null
+  # Model name passed to the Gemini API. Empty = gemini-2.5-flash.
+  model: gemini-2.5-flash
+  # Post-scan executive summary rendered into the HTML report.
+  # null = enabled when LLM is enabled and HTML is requested.
+  summarize: null
+
+# --- Baseline diff ----------------------------------------------------------
+# Show only findings that aren't already in this baseline file.
+# Path is relative to the project root. Empty = no baseline.
+baseline: ""
+
+# --- UI / presentation ------------------------------------------------------
+# Control how cyberai looks in your terminal. All keys optional; missing keys
+# default to "auto" (which respects TTY detection + the NO_COLOR env var +
+# the --no-color / --color flags).
+# ui:
+#   color: auto         # auto | always | never
+#   progress: auto      # auto | spinner | plain | off
+#   unicode: auto       # auto | true | false (emoji vs ASCII fallbacks)

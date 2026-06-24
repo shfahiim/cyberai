@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cyberai-vulnerable-python-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cyberai-vulnerable-python-api
+  template:
+    metadata:
+      labels:
+        app: cyberai-vulnerable-python-api
+    spec:
+      containers:
+        - name: api
+          image: cyberai-vulnerable-python-api:latest
+          imagePullPolicy: Always
+          env:
+            # FAKE BENCHMARK SECRET: intentionally hardcoded for scanners.
+            - name: AWS_ACCESS_KEY_ID
+              value: AKIAIOSFODNN7EXAMPLE
+          securityContext:
+            privileged: true
+            allowPrivilegeEscalation: true
+            runAsUser: 0
+          volumeMounts:
+            - name: host-root
+              mountPath: /host
+      volumes:
+        - name: host-root
+          hostPath:
+            path: /
+            type: Directory

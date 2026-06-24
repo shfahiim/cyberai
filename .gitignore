@@ -1,0 +1,26 @@
+# Local CyberAI outputs
+cyberai-reports/
+internal/cli/cyberai-reports/
+bench/results/
+bench/vulnerable-project/cyberai-reports/
+
+# Local CyberAI config/state
+.cyberai.yaml
+.cyberai.yaml.bak
+.puku-cli/
+
+# Build artifacts
+cyberai
+bin/
+dist/
+build/
+coverage.out
+
+# Python cache files from benchmark runs
+__pycache__/
+*.py[cod]
+
+# OS/editor noise
+.DS_Store
+*.swp
+*.tmp
