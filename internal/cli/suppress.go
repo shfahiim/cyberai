@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -35,13 +34,23 @@ func newSuppressCmd() *cobra.Command {
 		}, "\n"),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// If an argument is provided and looks like a finding / suppression
-			// ID, delegate to `suppress add` with that argument.
 			if len(args) == 1 {
 				addCmd := newSuppressAddCmd()
-				// Propagate all flags the user set on the parent command.
-				addCmd.SetArgs(append([]string{args[0]}, os.Args[2:]...))
-				return addCmd.RunE(addCmd, args)
+				addArgs := []string{args[0]}
+				for _, name := range []string{"reason", "author", "ticket", "expires", "rule-id", "path", "target"} {
+					if !cmd.Flags().Changed(name) {
+						continue
+					}
+					val, err := cmd.Flags().GetString(name)
+					if err != nil {
+						return err
+					}
+					addArgs = append(addArgs, "--"+name, val)
+				}
+				addCmd.SetArgs(addArgs)
+				addCmd.SetOut(cmd.OutOrStdout())
+				addCmd.SetErr(cmd.ErrOrStderr())
+				return addCmd.Execute()
 			}
 			return cmd.Help()
 		},
