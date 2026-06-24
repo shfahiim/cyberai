@@ -29,15 +29,21 @@ func NewRootCmd() *cobra.Command {
 		Use:   "cyberai",
 		Short: "Security and code analysis CLI",
 		Long: strings.Join([]string{
-			"CyberAI - static + security analysis for software projects.",
+			"CyberAI — local security scanning for software projects.",
 			"",
-			"Phase 1 ships deterministic scanners (Semgrep, Gitleaks, Trivy, Checkov, Hadolint, Zizmor) with a",
-			"thin Gemini router that decides which scanners and rules to run",
-			"based on the project. The scanning itself is local, deterministic, and",
-			"optional-LLM via --no-llm.",
+			"Getting started:",
+			"  cyberai setup          Prepare tools and project config",
+			"  cyberai scan           Quick scan (terminal output)",
+			"  cyberai doctor         Check toolchain and config health",
 			"",
-			"cyberai is READ-ONLY: it never modifies your source code, opens PRs, or",
-			"runs write operations against the scanned project.",
+			"Common workflows:",
+			"  cyberai scan --save              Write SARIF/JSON/HTML reports",
+			"  cyberai scan --smart             Enable LLM routing + summary",
+			"  cyberai scan --preset ci -o out/ CI pipeline scan",
+			"  cyberai scan --only secrets      Secrets-only scan",
+			"",
+			"CyberAI is read-only: it never modifies your source code or git state.",
+			"Run cyberai <command> --help for detailed command documentation.",
 		}, "\n"),
 		Version:      Version,
 		SilenceUsage: true,
@@ -130,13 +136,16 @@ func NewRootCmd() *cobra.Command {
 	})
 
 	root.AddCommand(
+		newSetupCmd(),
+		newDoctorCmd(),
 		newScanCmd(),
 		newToolsCmd(),
 		newInitCmd(),
+		newConfigCmd(),
 		newReportCmd(),
-		newAnimCmd(),
 		newSuppressCmd(),
 		newSbomCmd(),
+		newAnimCmd(),
 	)
 
 	return root

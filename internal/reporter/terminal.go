@@ -24,6 +24,8 @@ type Terminal struct {
 	// MaxFindings limits how many findings we print. Zero = no limit.
 	// Past this, we print "... and N more".
 	MaxFindings int
+	// ShowSuppressHints prints a one-line suppress command under each finding.
+	ShowSuppressHints bool
 	// ColorFn is overridable for tests / forcing color.
 	ColorFn func(s string, c Color) string
 }
@@ -177,6 +179,10 @@ func (t *Terminal) writeOne(w io.Writer, f model.Finding) {
 		if f.Description != "" && len(f.Description) < 200 {
 			fmt.Fprintf(w, "    %s\n", t.colorize(firstLine(f.Description), ColorDim))
 		}
+		if t.ShowSuppressHints && f.ID != "" {
+			fmt.Fprintf(w, "    %s\n", t.colorize(
+				fmt.Sprintf("suppress: cyberai suppress %s --reason \"...\"", f.ID), ColorDim))
+		}
 		return
 	}
 	sevStyle := severityLipglossStyle(f.Severity, t.IsTTY)
@@ -189,6 +195,10 @@ func (t *Terminal) writeOne(w io.Writer, f model.Finding) {
 		f.Tool, f.RuleID)
 	if f.Description != "" && len(f.Description) < 200 {
 		fmt.Fprintf(w, "    %s\n", dimStyle(t.IsTTY).Render(firstLine(f.Description)))
+	}
+	if t.ShowSuppressHints && f.ID != "" {
+		fmt.Fprintf(w, "    %s\n", dimStyle(t.IsTTY).Render(
+			fmt.Sprintf("suppress: cyberai suppress %s --reason \"...\"", f.ID)))
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -13,9 +14,18 @@ import (
 func newInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init [path]",
-		Short: "Generate a starter .cyberai.yaml in the target directory",
-		Long: `Writes a commented .cyberai.yaml to the target directory (default:
-current working directory). Existing files are not overwritten.`,
+		Short: "Create a starter .cyberai.yaml config file",
+		Long: strings.Join([]string{
+			"Writes a commented .cyberai.yaml to the target directory (default: current directory).",
+			"",
+			"Existing files are never overwritten. For a full first-time setup including",
+			"scanner installation, prefer:",
+			"  cyberai setup",
+			"",
+			"Examples:",
+			"  cyberai init",
+			"  cyberai init ./services/api",
+		}, "\n"),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target := "."

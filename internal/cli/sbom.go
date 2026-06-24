@@ -21,9 +21,19 @@ func newSbomCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "sbom [path]",
-		Short: "Generate Software Bill of Materials (SBOM) using syft",
-		Long: `Generates a Software Bill of Materials (SBOM) for the target path or container image using Syft.
-Optionally enriches the SBOM with vulnerability data using Grype.`,
+		Short: "Generate a Software Bill of Materials (SBOM)",
+		Long: strings.Join([]string{
+			"Generate an SBOM for a directory or container image using Syft.",
+			"",
+			"Requires syft on PATH (see cyberai tools list). Use --enrich to attach",
+			"vulnerability data from Grype.",
+			"",
+			"Examples:",
+			"  cyberai sbom .",
+			"  cyberai sbom --format spdx > sbom.spdx.json",
+			"  cyberai sbom --image myapp:latest",
+			"  cyberai sbom . --enrich > enriched.cdx.json",
+		}, "\n"),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Validate and resolve format

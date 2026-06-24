@@ -116,16 +116,17 @@ type PoliciesConfig struct {
 
 // Default returns a Config with sensible defaults for a first run.
 func Default() *Config {
+	llmOff := false
 	return &Config{
-		Scanners:          nil, // let router decide
+		Scanners:          nil,
 		SeverityThreshold: model.SeverityLow,
 		IgnorePatterns:    []string{},
 		Output: OutputConfig{
-			Formats: []string{"sarif", "json", "markdown", "html", "terminal"},
+			Formats: []string{"terminal"},
 			Path:    "cyberai-reports",
 		},
 		LLM: LLMConfig{
-			Enabled:   nil, // follow CLI
+			Enabled:   &llmOff,
 			Provider:  llm.DefaultProvider,
 			Model:     llm.ResolveModel(llm.DefaultProvider, ""),
 			Summarize: nil,
@@ -172,7 +173,7 @@ func (c *Config) applyDefaults() {
 		c.LLM.Model = llm.ResolveModel(c.LLM.Provider, "")
 	}
 	if len(c.Output.Formats) == 0 {
-		c.Output.Formats = []string{"sarif", "json", "markdown", "html", "terminal"}
+		c.Output.Formats = []string{"terminal"}
 	}
 	if c.Output.Path == "" {
 		c.Output.Path = "cyberai-reports"
@@ -211,8 +212,8 @@ func (c *Config) IsScannerEnabled(name string) bool {
 
 // LLMEnabled returns whether the LLM should run, given config + CLI override.
 //
-// Precedence (highest first): LLMConfig.Enabled (if non-nil), CLI override
-// (if non-nil), default (true).
+// Precedence (highest first): CLI override (if non-nil), LLMConfig.Enabled
+// (if non-nil), default (false).
 func (c *Config) LLMEnabled(cliOverride *bool) bool {
 	if cliOverride != nil {
 		return *cliOverride
@@ -220,7 +221,7 @@ func (c *Config) LLMEnabled(cliOverride *bool) bool {
 	if c.LLM.Enabled != nil {
 		return *c.LLM.Enabled
 	}
-	return true
+	return false
 }
 
 // SummarizerEnabled mirrors LLMEnabled but for the summarizer specifically.

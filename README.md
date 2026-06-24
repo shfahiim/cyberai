@@ -10,17 +10,20 @@ The scanner is read-only with respect to the target project. It does not modify 
 # Build and install the cyberai binary
 ./setup.sh
 
-# Scan the current directory
+# First-time project setup (tools + config)
+cyberai setup
+
+# Quick local scan (terminal output, no LLM, no report files)
 cyberai scan
 
-# Scan one scanner category only
-cyberai scan --only secrets
+# Save SARIF/JSON/HTML reports
+cyberai scan --save
 
-# Pick a target and report formats
-cyberai scan ./my-app --format sarif,json,html
+# CI pipeline scan
+cyberai scan --preset ci -o reports/
 
-# CI mode: no LLM, JSON summary, non-zero exit on findings
-cyberai scan --ci
+# Check toolchain and config
+cyberai doctor
 ```
 
 Running `cyberai` with no subcommand shows the CyberAI ASCII logo, command list, and global flags.

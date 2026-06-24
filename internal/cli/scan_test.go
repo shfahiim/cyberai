@@ -32,7 +32,7 @@ func TestRunScan_BareRepo(t *testing.T) {
 		"Scan complete",
 		"target: " + dir,
 		"router: default (default)",
-		"reports: " + filepath.Join(dir, "cyberai-reports"),
+		"terminal only",
 		"no findings at or above the configured threshold",
 	}
 	for _, want := range required {
@@ -118,7 +118,7 @@ func TestRunScan_OnlyFlag(t *testing.T) {
 	cmd := NewRootCmd()
 	cmd.SetOut(stdout)
 	cmd.SetErr(stderr)
-	cmd.SetArgs([]string{"scan", dir, "--no-llm", "--only", "secrets", "--summary", "off"})
+	cmd.SetArgs([]string{"scan", dir, "--no-llm", "--only", "secrets", "--save", "--summary", "off"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("scan: %v", err)
 	}

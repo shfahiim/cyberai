@@ -158,7 +158,11 @@ func printPrettyScanSummary(cmd *cobra.Command, summary *scanSummary) {
 	fmt.Fprintf(w, "%s %s\n", scanKey(uiR, "target:"), summary.Target)
 	fmt.Fprintf(w, "%s %s (%s)\n", scanKey(uiR, "router:"), summary.Router, summary.PlanSource)
 	fmt.Fprintf(w, "%s %s  %s %s\n", scanKey(uiR, "threshold:"), summary.Threshold, scanKey(uiR, "duration:"), humanDuration(summary.DurationMs))
-	fmt.Fprintf(w, "%s %s\n", scanKey(uiR, "reports:"), summary.OutputDir)
+	if summary.OutputDir != "" {
+		fmt.Fprintf(w, "%s %s\n", scanKey(uiR, "reports:"), summary.OutputDir)
+	} else {
+		fmt.Fprintf(w, "%s terminal only (use --save or -o to write report files)\n", scanKey(uiR, "reports:"))
+	}
 	if len(summary.BootstrappedTools) > 0 {
 		fmt.Fprintf(w, "%s %s\n", scanKey(uiR, "bootstrapped:"), strings.Join(summary.BootstrappedTools, ", "))
 	}
@@ -321,4 +325,32 @@ func resolveWithExistingParents(path string) (string, error) {
 
 func terminalHyperlink(url, text string) string {
 	return "\x1b]8;;" + url + "\x1b\\" + text + "\x1b]8;;\x1b\\"
+}
+
+func printSkippedScannerSummary(cmd *cobra.Command, results []model.ScanResult) {
+	skipped := []string{}
+	errored := []string{}
+	for _, sr := range results {
+		if sr.Skipped {
+			skipped = append(skipped, sr.Tool)
+			continue
+		}
+		if sr.Error != "" {
+			errored = append(errored, fmt.Sprintf("%s (%s)", sr.Tool, sr.Error))
+		}
+	}
+	if len(skipped) == 0 && len(errored) == 0 {
+		return
+	}
+	uiR := uiFrom(cmd)
+	if len(skipped) > 0 {
+		msg := fmt.Sprintf("skipped %d scanner(s) not installed: %s", len(skipped), strings.Join(skipped, ", "))
+		printBootstrapMessage(cmd, "warning", msg)
+		printBootstrapMessage(cmd, "info", "fix: cyberai tools install "+strings.Join(skipped, " "))
+		printBootstrapMessage(cmd, "info", "or:  cyberai scan --install-missing")
+		_ = uiR
+	}
+	for _, e := range errored {
+		printBootstrapMessage(cmd, "warning", "scanner error: "+e)
+	}
 }

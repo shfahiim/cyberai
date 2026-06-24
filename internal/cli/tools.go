@@ -22,14 +22,26 @@ type toolsOpts struct {
 func newToolsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "tools",
-		Short: "Manage scanner tools and the local cyberai toolchain",
-		Long: `The tools subcommand manages the external scanners cyberai shells
-out to (Semgrep, Gitleaks, Trivy, Checkov, Hadolint, Zizmor).
-
-cyberai keeps managed tools inside ~/.cyberai/bin and prefers them at runtime.
-Scans skip missing scanners by default; use 'cyberai scan --install-missing'
-or this command when you explicitly want to install, update, or remove that
-local toolchain.`,
+		Short: "Install and manage local scanner binaries",
+		Long: strings.Join([]string{
+			"Manage the external scanners CyberAI runs (Semgrep, Gitleaks, Trivy,",
+			"Checkov, Hadolint, Zizmor, and others).",
+			"",
+			"Managed tools live under ~/.cyberai/bin and are preferred at scan time.",
+			"Missing scanners are skipped unless you pass --install-missing on scan",
+			"or run cyberai setup / cyberai tools install first.",
+			"",
+			"Subcommands:",
+			"  list     Show installed vs missing scanners",
+			"  install  Download managed scanners (default: all installable tools)",
+			"  update   Refresh managed scanners to latest releases",
+			"  remove   Delete managed scanner copies",
+			"",
+			"Examples:",
+			"  cyberai tools list",
+			"  cyberai tools install checkov hadolint",
+			"  cyberai tools update trivy",
+		}, "\n"),
 	}
 
 	cmd.AddCommand(newToolsListCmd())

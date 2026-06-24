@@ -45,23 +45,26 @@ func selectRouter(llmEnabled bool, cfg *config.Config, _ *project.Profile) (rout
 
 // scanOptions holds the resolved flag values for the `scan` command.
 type scanOptions struct {
-	Target         string
-	Formats        []string
-	OutputDir      string
-	Severity       string
-	Model          string
-	Only           []string // e.g. ["sast","secrets"]; empty = all
-	NoLLM          bool
-	PickModel      bool
-	Explain        bool // per-finding LLM explanations
-	CI             bool
-	BaselinePath   string
-	Verbose        bool
-	InstallMissing bool
-	SummaryFormat  string
-	LLMOverride    *bool
-	Enrich         bool   // fetch EPSS + KEV enrichment
-	Diff           string // git ref to restrict findings to changed files
+	Target            string
+	Formats           []string
+	OutputDir         string
+	Severity          string
+	Model             string
+	Only              []string
+	Preset            string
+	NoLLM             bool
+	SmartLLM          bool
+	PickModel         bool
+	CI                bool
+	BaselinePath      string
+	Verbose           bool
+	InstallMissing    bool
+	SummaryFormat     string
+	Save              bool
+	LLMOverride       *bool
+	Enrich            bool
+	Diff              string
+	SuppressHints     bool
 }
 
 func newScanCmd() *cobra.Command {
@@ -69,45 +72,58 @@ func newScanCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "scan [path]",
-		Short: "Scan a project for security issues and code smells",
-		Long: `Scan runs the configured scanners (Semgrep, Gitleaks, Trivy,
-Checkov, Hadolint, Zizmor) over
-the target directory, normalizes their output, and produces reports.
-
-By default the LLM router (Gemini 3.5 Flash) decides which scanners to
-run and which rules to enable based on a quick look at the project.
-Use --no-llm to skip the LLM and run all scanners with default rulesets.
-
-Reports are read-only with respect to the scanned project. cyberai never
-modifies source files, opens PRs, or runs write operations against the
-target.`,
+		Short: "Scan a project for security issues",
+		Long: strings.Join([]string{
+			"Run deterministic security scanners over a project and show results.",
+			"",
+			"Quick start:",
+			"  cyberai scan                     # terminal summary, no LLM, no report files",
+			"  cyberai scan --save              # also write SARIF/JSON/HTML under ./cyberai-reports",
+			"  cyberai scan --smart             # enable Gemini router + HTML summary",
+			"  cyberai scan --preset ci -o out/ # CI: SARIF + JUnit + enrichment, fail on findings",
+			"",
+			"Presets (bundle common flag combinations):",
+			"  quick   Default: fast local scan, terminal output, LLM off",
+			"  full    All report formats, EPSS/KEV enrichment, smart routing",
+			"  ci      No LLM, SARIF+JUnit+JSON, enrichment, non-zero exit on findings",
+			"  pr      Changed files only (--diff origin/HEAD), medium+ severity",
+			"",
+			"Scanner categories for --only:",
+			"  sast, secrets, sca, iac, license, docker, cicd",
+			"  Aliases: code, dependencies, infrastructure, containers, pipelines",
+			"",
+			"CyberAI is read-only: it never modifies source files or git state.",
+		}, "\n"),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
 				opts.Target = args[0]
 			}
+			if err := applyScanPreset(opts, cmd); err != nil {
+				return err
+			}
 			return runScan(cmd, opts)
 		},
 	}
 
-	cmd.Flags().StringVarP(&opts.OutputDir, "output", "o", "", "output directory (default: ./cyberai-reports)")
-	cmd.Flags().StringVar(&opts.Severity, "severity", "", "minimum severity: critical|high|medium|low|info (default: from config or 'low')")
-	cmd.Flags().StringVar(&opts.Model, "model", "", "LLM model for routing and summaries (default: provider default)")
-	cmd.Flags().StringSliceVar(&opts.Only, "only", nil, "comma-separated scanner categories to run (sast,secrets,sca,iac,license,docker,cicd); default: router plan")
-	cmd.Flags().BoolVar(&opts.NoLLM, "no-llm", false, "skip the LLM router and summarizer; run deterministic defaults")
-	cmd.Flags().BoolVar(&opts.PickModel, "pick-model", false, "interactively choose an LLM model for this run")
-	cmd.Flags().BoolVar(&opts.Explain, "explain", false, "include per-finding LLM explanations in the report (HTML only)")
-	cmd.Flags().BoolVar(&opts.CI, "ci", false, "CI mode: --no-llm implied, non-zero exit on findings")
-	cmd.Flags().StringVar(&opts.BaselinePath, "baseline", "", "path to a baseline JSON to diff against")
-	cmd.Flags().BoolVarP(&opts.Verbose, "verbose", "v", false, "verbose logging (router reasoning, timings, cache hits)")
-	cmd.Flags().BoolVar(&opts.InstallMissing, "install-missing", false, "install missing scanner tools before scanning (explicit; may download packages)")
-	cmd.Flags().StringVar(&opts.SummaryFormat, "summary", "", "final summary format: pretty|json|off (default: pretty, or json in --ci)")
-
-	// Formats is variadic so users can do --format sarif --format html
-	cmd.Flags().StringArrayVar(&opts.Formats, "format", nil, "report format(s): sarif|json|markdown|html|terminal|junit|csv (repeatable or comma-separated)")
-
-	cmd.Flags().BoolVar(&opts.Enrich, "enrich", false, "fetch EPSS scores and CISA KEV data to enrich findings with priority labels")
-	cmd.Flags().StringVar(&opts.Diff, "diff", "", "restrict findings to files changed relative to this git ref (e.g. HEAD, main)")
+	cmd.Flags().StringVarP(&opts.OutputDir, "output", "o", "", "directory for saved reports (implies --save)")
+	cmd.Flags().BoolVar(&opts.Save, "save", false, "write report files (default formats unless --format is set)")
+	cmd.Flags().StringVar(&opts.Severity, "severity", "", "minimum severity: critical|high|medium|low|info")
+	cmd.Flags().StringVar(&opts.Model, "model", "", "LLM model for routing and summaries")
+	cmd.Flags().StringSliceVar(&opts.Only, "only", nil, "scanner categories (see help); aliases supported")
+	cmd.Flags().StringVar(&opts.Preset, "preset", "", "scan preset: quick|full|ci|pr (default: quick, or ci when --ci is set)")
+	cmd.Flags().BoolVar(&opts.SmartLLM, "smart", false, "enable LLM router and HTML summarizer")
+	cmd.Flags().BoolVar(&opts.NoLLM, "no-llm", false, "disable LLM router and summarizer")
+	cmd.Flags().BoolVar(&opts.PickModel, "pick-model", false, "interactively choose an LLM model (requires --smart)")
+	cmd.Flags().BoolVar(&opts.CI, "ci", false, "CI mode: preset ci, JSON summary, non-zero exit on findings")
+	cmd.Flags().StringVar(&opts.BaselinePath, "baseline", "", "baseline JSON report; hide findings already in baseline")
+	cmd.Flags().BoolVarP(&opts.Verbose, "verbose", "v", false, "show router plan, timings, and per-scanner stats")
+	cmd.Flags().BoolVar(&opts.InstallMissing, "install-missing", false, "install missing managed scanners before scanning")
+	cmd.Flags().StringVar(&opts.SummaryFormat, "summary", "", "end-of-run summary: pretty|json|off (default: pretty, json in --ci)")
+	cmd.Flags().StringArrayVar(&opts.Formats, "format", nil, "report format(s): sarif|json|markdown|html|terminal|junit|csv")
+	cmd.Flags().BoolVar(&opts.Enrich, "enrich", false, "fetch EPSS and CISA KEV data; add priority labels")
+	cmd.Flags().StringVar(&opts.Diff, "diff", "", "only report findings in files changed vs git ref (e.g. main, HEAD~1)")
+	cmd.Flags().BoolVar(&opts.SuppressHints, "suppress-hints", true, "show cyberai suppress … hints under terminal findings")
 
 	return cmd
 }
@@ -157,7 +173,11 @@ func runScan(cmd *cobra.Command, opts *scanOptions) error {
 		cfg.LLM.Model = opts.Model
 	}
 	if len(opts.Only) > 0 {
-		cfg.Scanners = opts.Only
+		normalized, err := normalizeCategories(opts.Only)
+		if err != nil {
+			return err
+		}
+		cfg.Scanners = normalized
 	}
 	if opts.OutputDir != "" {
 		cfg.Output.Path = opts.OutputDir
@@ -166,10 +186,18 @@ func runScan(cmd *cobra.Command, opts *scanOptions) error {
 		f := false
 		cfg.LLM.Enabled = &f
 	}
+	if opts.SmartLLM && !opts.NoLLM && !opts.CI {
+		f := true
+		cfg.LLM.Enabled = &f
+	}
 	if opts.BaselinePath != "" {
 		cfg.BaselinePath = opts.BaselinePath
 	}
 	cliLLM := opts.LLMOverride
+	if opts.SmartLLM && !opts.NoLLM && !opts.CI {
+		f := true
+		cliLLM = &f
+	}
 	if opts.NoLLM || opts.CI {
 		f := false
 		cliLLM = &f
@@ -445,15 +473,11 @@ func runScan(cmd *cobra.Command, opts *scanOptions) error {
 		}
 	}
 
-	// 7. Render reports. Config-sourced output paths are confined to the target
-	// root so an untrusted repository cannot redirect artifacts elsewhere.
-	outputDir, err := resolveOutputDir(profile.Root, cfg.Output.Path, opts.OutputDir != "")
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
-		return fmt.Errorf("create output dir: %w", err)
-	}
+	// 7. Render reports when the user asked to save artifacts.
+	saveReports := shouldSaveReports(opts, cmd)
+	formats := resolveFormats(opts, cfg, saveReports)
+	outputDir := ""
+	formatPaths := map[string]string{}
 
 	rep := reporter.NewReport(
 		profile.Root, profile.Hash(),
@@ -462,53 +486,60 @@ func runScan(cmd *cobra.Command, opts *scanOptions) error {
 		result.Duration,
 	)
 
-	// Phase 1.8: optional LLM executive summary. Only renders into the HTML
-	// report; SARIF/JSON/Markdown stay machine-parseable for CI.
-	summaryHTML := ""
-	if llmEnabled && !opts.CI && hasFormat(resolveFormats(opts, cfg), "html") {
-		sumr, err := summarizer.NewLLM(cfg.LLM.Provider, cfg.LLM.Model)
+	if saveReports {
+		var err error
+		outputDir, err = resolveOutputDir(profile.Root, cfg.Output.Path, opts.OutputDir != "")
 		if err != nil {
-			if opts.Verbose {
-				msg := fmt.Sprintf("summarizer setup: %v", err)
-				if uiR != nil {
-					msg = uiR.WarningStyle().Render(msg)
+			return err
+		}
+		if err := os.MkdirAll(outputDir, 0o755); err != nil {
+			return fmt.Errorf("create output dir: %w", err)
+		}
+
+		summaryHTML := ""
+		if llmEnabled && !opts.CI && hasFormat(formats, "html") {
+			sumr, err := summarizer.NewLLM(cfg.LLM.Provider, cfg.LLM.Model)
+			if err != nil {
+				if opts.Verbose {
+					msg := fmt.Sprintf("summarizer setup: %v", err)
+					if uiR != nil {
+						msg = uiR.WarningStyle().Render(msg)
+					}
+					fmt.Fprintln(cmd.ErrOrStderr(), msg)
 				}
-				fmt.Fprintln(cmd.ErrOrStderr(), msg)
-			}
-		} else if sum, err := sumr.Summarize(filtered); err != nil {
-			// Summarizer failure is non-fatal: log and continue with no banner.
-			if opts.Verbose {
-				msg := fmt.Sprintf("summarizer: %v", err)
-				if uiR != nil {
-					msg = uiR.WarningStyle().Render(msg)
+			} else if sum, err := sumr.Summarize(filtered); err != nil {
+				if opts.Verbose {
+					msg := fmt.Sprintf("summarizer: %v", err)
+					if uiR != nil {
+						msg = uiR.WarningStyle().Render(msg)
+					}
+					fmt.Fprintln(cmd.ErrOrStderr(), msg)
 				}
-				fmt.Fprintln(cmd.ErrOrStderr(), msg)
-			}
-		} else if sum != nil {
-			summaryHTML = sum.Markdown
-			if opts.Verbose {
-				key := "summary:"
-				if uiR != nil {
-					key = uiR.KeyStyle().Render(key)
+			} else if sum != nil {
+				summaryHTML = sum.Markdown
+				if opts.Verbose {
+					key := "summary:"
+					if uiR != nil {
+						key = uiR.KeyStyle().Render(key)
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "%s generated by %s/%s\n", key, cfg.LLM.Provider, cfg.LLM.Model)
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s generated by %s/%s\n", key, cfg.LLM.Provider, cfg.LLM.Model)
 			}
+		}
+
+		formatPaths, err = writeReports(cmd, outputDir, rep, formats, summaryHTML)
+		if err != nil {
+			return err
 		}
 	}
 
-	formats := resolveFormats(opts, cfg)
-	formatPaths, err := writeReports(cmd, outputDir, rep, formats, summaryHTML)
-	if err != nil {
-		return err
-	}
-
-	// Terminal report always prints to stdout (separately from any
-	// file-based reports). This is the "see what just happened" view.
-	// We skip it in --ci to keep CI logs clean (CI wants SARIF only).
 	if !opts.CI && hasFormat(formats, "terminal") {
 		term := reporter.NewTerminal()
+		term.ShowSuppressHints = opts.SuppressHints
 		term.Write(cmd.OutOrStdout(), rep)
 	}
+
+	printSkippedScannerSummary(cmd, result.Results)
 
 	summaryPath := formatPaths["json"]
 	summary := &scanSummary{
@@ -672,12 +703,15 @@ func resolveTarget(t string) (string, error) {
 
 // resolveFormats decides which formats to render.
 //
-// Precedence: --format flag > config.output.formats > [sarif, json, markdown, html, terminal].
-// We always de-dupe and validate. Unknown format names produce an error.
-func resolveFormats(opts *scanOptions, cfg *config.Config) []string {
+// When saveReports is false, only terminal output is produced.
+// Precedence when saving: --format flag > config.output.formats > default file formats.
+func resolveFormats(opts *scanOptions, cfg *config.Config, saveReports bool) []string {
+	if !saveReports {
+		return []string{"terminal"}
+	}
+
 	var formats []string
 	if len(opts.Formats) > 0 {
-		// Allow comma-separated values too.
 		for _, f := range opts.Formats {
 			for _, part := range strings.Split(f, ",") {
 				part = strings.TrimSpace(part)
@@ -687,7 +721,19 @@ func resolveFormats(opts *scanOptions, cfg *config.Config) []string {
 			}
 		}
 	} else {
-		formats = cfg.Output.Formats
+		cfgFormats := cfg.Output.Formats
+		hasFileFormat := false
+		for _, f := range cfgFormats {
+			if f != "terminal" {
+				hasFileFormat = true
+				break
+			}
+		}
+		if hasFileFormat {
+			formats = append(formats, cfgFormats...)
+		} else {
+			formats = append(formats, defaultFileFormats...)
+		}
 	}
 	// De-dupe while preserving order.
 	seen := map[string]bool{}

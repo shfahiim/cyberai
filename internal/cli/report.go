@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"strings"
 
 	"github.com/shfahiim/cyberai/internal/baseline"
 	"github.com/shfahiim/cyberai/internal/ui"
@@ -14,10 +15,17 @@ import (
 func newReportCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "report",
-		Short: "Operate on saved reports (compare, summarize)",
-		Long: `The report subcommand works on previously-saved cyberai JSON
-reports. The first wired-in operation is ` + "`compare`" + `, which shows
-the difference between two scan runs (used for baseline diffs).`,
+		Short: "Compare saved scan reports",
+		Long: strings.Join([]string{
+			"Operate on JSON reports produced by cyberai scan --save.",
+			"",
+			"Subcommands:",
+			"  compare   Show new and resolved findings between two scan runs",
+			"",
+			"Examples:",
+			"  cyberai report compare --baseline old/report.json --current new/report.json",
+			"  cyberai report compare --baseline base.json --current curr.json --format markdown",
+		}, "\n"),
 	}
 
 	cmd.AddCommand(newReportCompareCmd())

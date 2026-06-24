@@ -19,23 +19,20 @@ func newSuppressCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "suppress [finding-id]",
 		Short: "Manage finding suppressions",
-		Long: `Manage the .cyberai-suppressions.yaml file in the project root.
-
-Suppressions let you permanently silence known-false-positive findings so
-they are excluded from future scan reports.
-
-A suppression can target:
-  • A specific finding by its stable ID (F-…)          --finding-id
-  • All findings from a rule, optionally per file glob  --rule-id [--path]
-
-Suppressions support optional expiry dates (--expires) so that accept-risk
-decisions are automatically revisited.
-
-Examples:
-  cyberai suppress F-a1b2c3d4e5f6 --reason "false positive"
-  cyberai suppress add --rule-id python.sql-injection --reason "mitigated" --expires 90d
-  cyberai suppress list
-  cyberai suppress remove S-deadbeef01020304`,
+		Long: strings.Join([]string{
+			"Manage .cyberai-suppressions.yaml in the project root.",
+			"",
+			"Suppressions hide known false positives from future scan output.",
+			"Match by finding ID (F-…) or by rule ID with optional path glob.",
+			"",
+			"Examples:",
+			"  cyberai suppress F-a1b2c3d4 --reason \"false positive\"",
+			"  cyberai suppress add --rule-id python.sql-injection --reason \"mitigated\" --expires 90d",
+			"  cyberai suppress list",
+			"  cyberai suppress remove S-deadbeef",
+			"",
+			"After scanning, terminal output includes suppress hints when enabled.",
+		}, "\n"),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// If an argument is provided and looks like a finding / suppression

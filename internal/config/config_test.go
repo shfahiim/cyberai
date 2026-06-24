@@ -176,10 +176,10 @@ func TestLLMEnabled_Precedence(t *testing.T) {
 		t.Error("config (false) should be used when no CLI override")
 	}
 
-	// Both unset → default true
+	// Both unset → default false
 	c3 := Config{}
-	if !c3.LLMEnabled(nil) {
-		t.Error("default should be enabled when nothing set")
+	if c3.LLMEnabled(nil) {
+		t.Error("default should be disabled when nothing set")
 	}
 }
 

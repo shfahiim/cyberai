@@ -13,6 +13,7 @@ func TestResolveProvider_Default(t *testing.T) {
 }
 
 func TestResolveModel_UsesProviderDefault(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	if got := ResolveModel(gemini.Provider, ""); got != gemini.DefaultModel {
 		t.Fatalf("ResolveModel default = %q, want %q", got, gemini.DefaultModel)
 	}
