@@ -27,8 +27,8 @@ func newToolsCmd() *cobra.Command {
 out to (Semgrep, Gitleaks, Trivy, Checkov, Hadolint, Zizmor).
 
 cyberai keeps managed tools inside ~/.cyberai/bin and prefers them at runtime.
-Interactive scans can also bootstrap missing scanners automatically, so this
-command is the explicit place to inspect, preinstall, update, or remove that
+Scans skip missing scanners by default; use 'cyberai scan --install-missing'
+or this command when you explicitly want to install, update, or remove that
 local toolchain.`,
 	}
 
@@ -80,20 +80,24 @@ If a tool is already managed locally, use --force to replace it.`,
 			targets := args
 			if len(targets) == 0 {
 				for _, t := range tools.All() {
-					targets = append(targets, t.Name)
+					if mgr.IsInstallable(t.Name) {
+						targets = append(targets, t.Name)
+					}
 				}
 			}
 			installOpts := tools.InstallOptions{Force: opts.Force, Yes: opts.Yes, Version: opts.Version}
 			var firstErr error
 			for _, name := range targets {
+				progress, live := newToolProgress(cmd)
+				progress.Start(name)
 				if err := mgr.Install(name, installOpts); err != nil {
-					printToolAction(cmd, "error", name, err.Error())
+					finishToolProgress(cmd, progress, live, "error", name, err.Error())
 					if firstErr == nil {
 						firstErr = err
 					}
 					continue
 				}
-				printToolAction(cmd, "success", name, "ready")
+				finishToolProgress(cmd, progress, live, "success", name, "ready")
 			}
 			if firstErr == nil {
 				rows, err := mgr.List()
@@ -128,20 +132,24 @@ local scanner toolchain to catch up with upstream releases.`,
 			targets := args
 			if len(targets) == 0 {
 				for _, t := range tools.All() {
-					targets = append(targets, t.Name)
+					if mgr.IsInstallable(t.Name) {
+						targets = append(targets, t.Name)
+					}
 				}
 			}
 			_ = opts
 			var firstErr error
 			for _, name := range targets {
+				progress, live := newToolProgress(cmd)
+				progress.Start(name)
 				if err := mgr.Update(name); err != nil {
-					printToolAction(cmd, "error", name, err.Error())
+					finishToolProgress(cmd, progress, live, "error", name, err.Error())
 					if firstErr == nil {
 						firstErr = err
 					}
 					continue
 				}
-				printToolAction(cmd, "success", name, "updated")
+				finishToolProgress(cmd, progress, live, "success", name, "updated")
 			}
 			return firstErr
 		},
@@ -171,14 +179,16 @@ owning that install still needs to remove it.`,
 			}
 			var firstErr error
 			for _, name := range targets {
+				progress, live := newToolProgress(cmd)
+				progress.Start(name)
 				if err := mgr.Remove(name); err != nil {
-					printToolAction(cmd, "error", name, err.Error())
+					finishToolProgress(cmd, progress, live, "error", name, err.Error())
 					if firstErr == nil {
 						firstErr = err
 					}
 					continue
 				}
-				printToolAction(cmd, "success", name, "removed")
+				finishToolProgress(cmd, progress, live, "success", name, "removed")
 			}
 			return firstErr
 		},
@@ -221,10 +231,43 @@ func printToolchain(cmd *cobra.Command, mgr *tools.Manager, rows []tools.ListRes
 	fmt.Fprintf(out, "\n%s %s\n", toolKey(uiR, "managed dir:"), mgr.BinDir)
 	fmt.Fprintf(out, "%s %s\n", toolKey(uiR, "venvs:"), mgr.VenvDir)
 	fmt.Fprintf(out, "%s %s\n", toolKey(uiR, "state:"), mgr.State)
-	fmt.Fprintf(out, "%s interactive scans can auto-install missing scanners.\n", toolKey(uiR, "bootstrap:"))
+	fmt.Fprintf(out, "%s scans skip missing scanners unless --install-missing is set.\n", toolKey(uiR, "bootstrap:"))
 	if len(missing) > 0 {
 		fmt.Fprintf(out, "%s %s\n", toolKey(uiR, "missing:"), strings.Join(missing, ", "))
 	}
+}
+
+func newToolProgress(cmd *cobra.Command) (ui.Progress, bool) {
+	uiR := uiFrom(cmd)
+	if uiR != nil && uiR.UseSpinner() {
+		return ui.NewProgress(ui.ProgressOptions{
+			Spinner:  true,
+			Writer:   cmd.ErrOrStderr(),
+			Unicode:  uiR.UnicodeEnabled(),
+			Renderer: uiR,
+		}), true
+	}
+	return ui.NewProgress(ui.ProgressOptions{
+		Spinner: false,
+		Writer:  cmd.ErrOrStderr(),
+	}), false
+}
+
+func finishToolProgress(cmd *cobra.Command, progress ui.Progress, live bool, level, name, status string) {
+	if progress == nil {
+		printToolAction(cmd, level, name, status)
+		return
+	}
+	if live {
+		if level == "error" {
+			progress.Finish(name, "error: "+status)
+			return
+		}
+		progress.Finish(name, status)
+		return
+	}
+	progress.Stop()
+	printToolAction(cmd, level, name, status)
 }
 
 func printToolAction(cmd *cobra.Command, level, name, status string) {

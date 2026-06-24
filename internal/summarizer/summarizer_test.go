@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/shfahiim/cyberai/internal/llm"
 	"github.com/shfahiim/cyberai/internal/model"
 )
 
@@ -57,8 +58,13 @@ func TestNoopSummarizer(t *testing.T) {
 }
 
 func TestNewGemini_NoAPIKey_ReturnsNoop(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	t.Setenv("GEMINI_API_KEY", "")
-	s := NewGemini("gemini-2.5-flash")
+	t.Setenv("GOOGLE_API_KEY", "")
+	s, err := NewLLM("gemini", "gemini-3.5-flash")
+	if err != nil {
+		t.Fatalf("NewLLM: %v", err)
+	}
 	if _, ok := s.(NoopSummarizer); !ok {
 		t.Errorf("expected NoopSummarizer when API key is empty, got %T", s)
 	}
@@ -66,7 +72,11 @@ func TestNewGemini_NoAPIKey_ReturnsNoop(t *testing.T) {
 
 func TestGeminiSummarizer_EmptyFindings_ReturnsNilNil(t *testing.T) {
 	t.Setenv("GEMINI_API_KEY", "test-key")
-	g := &GeminiSummarizer{APIKey: "test-key", Model: "gemini-2.5-flash"}
+	client, _, err := llm.NewClient("gemini", "gemini-3.5-flash", nil)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	g := &LLMSummarizer{Client: client}
 	got, err := g.Summarize(nil)
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)

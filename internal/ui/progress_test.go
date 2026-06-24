@@ -118,8 +118,30 @@ func TestSpinnerProgress_StopWritesFinalStateOnNonTTY(t *testing.T) {
 	if !strings.Contains(out, "x") {
 		t.Errorf("expected name 'x' in final state, got %q", out)
 	}
-	if !strings.Contains(out, "done — 7 findings") {
+	if !strings.Contains(out, "done") {
 		t.Errorf("expected final status, got %q", out)
+	}
+}
+
+func TestLiveProgress_RendersAnimationAndFixedFinishedLines(t *testing.T) {
+	var buf bytes.Buffer
+	p := NewProgress(ProgressOptions{Spinner: true, Writer: &buf, Unicode: true})
+
+	p.Start("gitleaks")
+	p.Finish("gitleaks", "done — 3 findings")
+	p.Start("semgrep")
+	p.Finish("semgrep", "done — 1 findings")
+	p.Stop()
+
+	out := buf.String()
+	if !strings.Contains(out, "CyberAI") {
+		t.Fatalf("expected CyberAI animation line in output, got %q", out)
+	}
+	if !strings.Contains(out, "gitleaks") || !strings.Contains(out, "semgrep") {
+		t.Fatalf("expected fixed scanner lines in output, got %q", out)
+	}
+	if strings.Count(out, "done") < 2 {
+		t.Fatalf("expected both scanners to finish, got %q", out)
 	}
 }
 

@@ -12,36 +12,35 @@ import (
 
 	"github.com/shfahiim/cyberai/internal/baseline"
 	"github.com/shfahiim/cyberai/internal/config"
+	"github.com/shfahiim/cyberai/internal/enrichment"
+	"github.com/shfahiim/cyberai/internal/gitdiff"
+	"github.com/shfahiim/cyberai/internal/llm"
 	"github.com/shfahiim/cyberai/internal/model"
+	"github.com/shfahiim/cyberai/internal/policy"
 	"github.com/shfahiim/cyberai/internal/project"
 	"github.com/shfahiim/cyberai/internal/reporter"
 	"github.com/shfahiim/cyberai/internal/router"
 	"github.com/shfahiim/cyberai/internal/scanner"
 	"github.com/shfahiim/cyberai/internal/summarizer"
+	"github.com/shfahiim/cyberai/internal/suppression"
 	"github.com/shfahiim/cyberai/internal/ui"
 )
 
-// scanPlanSemgrepRulesets and scanPlanTrivyScanners are populated by the
-// router step before buildScanners runs. They're package-level so the
-// builder can read them without threading through every call site.
-var (
-	scanPlanSemgrepRulesets []string
-	scanPlanTrivyScanners   []string
-)
+type scannerSelection struct {
+	SemgrepRulesets []string
+	TrivyScanners   []string
+}
 
 // selectRouter returns the appropriate router based on whether LLM is enabled.
-func selectRouter(llmEnabled bool, cfg *config.Config, _ *project.Profile) router.Router {
+func selectRouter(llmEnabled bool, cfg *config.Config, _ *project.Profile) (router.Router, error) {
 	if !llmEnabled {
-		return router.NewDefault()
+		return router.NewDefault(), nil
 	}
-	cache, err := router.NewCache("")
-	if err != nil {
-		// Cache failure is non-fatal — fall back to no-cache Gemini or default.
-		g, _ := router.NewGemini(cfg.LLM.Model, nil)
-		return g
+	var cache *router.Cache
+	if c, err := router.NewCache(""); err == nil {
+		cache = c
 	}
-	g, _ := router.NewGemini(cfg.LLM.Model, cache)
-	return g
+	return router.NewLLM(cfg.LLM.Provider, cfg.LLM.Model, cache)
 }
 
 // scanOptions holds the resolved flag values for the `scan` command.
@@ -50,8 +49,10 @@ type scanOptions struct {
 	Formats        []string
 	OutputDir      string
 	Severity       string
+	Model          string
 	Only           []string // e.g. ["sast","secrets"]; empty = all
 	NoLLM          bool
+	PickModel      bool
 	Explain        bool // per-finding LLM explanations
 	CI             bool
 	BaselinePath   string
@@ -59,6 +60,8 @@ type scanOptions struct {
 	InstallMissing bool
 	SummaryFormat  string
 	LLMOverride    *bool
+	Enrich         bool   // fetch EPSS + KEV enrichment
+	Diff           string // git ref to restrict findings to changed files
 }
 
 func newScanCmd() *cobra.Command {
@@ -71,7 +74,7 @@ func newScanCmd() *cobra.Command {
 Checkov, Hadolint, Zizmor) over
 the target directory, normalizes their output, and produces reports.
 
-By default the LLM router (Gemini 2.5 Flash) decides which scanners to
+By default the LLM router (Gemini 3.5 Flash) decides which scanners to
 run and which rules to enable based on a quick look at the project.
 Use --no-llm to skip the LLM and run all scanners with default rulesets.
 
@@ -89,25 +92,33 @@ target.`,
 
 	cmd.Flags().StringVarP(&opts.OutputDir, "output", "o", "", "output directory (default: ./cyberai-reports)")
 	cmd.Flags().StringVar(&opts.Severity, "severity", "", "minimum severity: critical|high|medium|low|info (default: from config or 'low')")
+	cmd.Flags().StringVar(&opts.Model, "model", "", "LLM model for routing and summaries (default: provider default)")
 	cmd.Flags().StringSliceVar(&opts.Only, "only", nil, "comma-separated scanner categories to run (sast,secrets,sca,iac,license,docker,cicd); default: router plan")
 	cmd.Flags().BoolVar(&opts.NoLLM, "no-llm", false, "skip the LLM router and summarizer; run deterministic defaults")
+	cmd.Flags().BoolVar(&opts.PickModel, "pick-model", false, "interactively choose an LLM model for this run")
 	cmd.Flags().BoolVar(&opts.Explain, "explain", false, "include per-finding LLM explanations in the report (HTML only)")
 	cmd.Flags().BoolVar(&opts.CI, "ci", false, "CI mode: --no-llm implied, non-zero exit on findings")
 	cmd.Flags().StringVar(&opts.BaselinePath, "baseline", "", "path to a baseline JSON to diff against")
 	cmd.Flags().BoolVarP(&opts.Verbose, "verbose", "v", false, "verbose logging (router reasoning, timings, cache hits)")
-	cmd.Flags().BoolVar(&opts.InstallMissing, "install-missing", false, "install missing scanner tools before scanning (default: auto on interactive terminals)")
+	cmd.Flags().BoolVar(&opts.InstallMissing, "install-missing", false, "install missing scanner tools before scanning (explicit; may download packages)")
 	cmd.Flags().StringVar(&opts.SummaryFormat, "summary", "", "final summary format: pretty|json|off (default: pretty, or json in --ci)")
 
 	// Formats is variadic so users can do --format sarif --format html
-	cmd.Flags().StringArrayVar(&opts.Formats, "format", nil, "report format(s): sarif|json|markdown|html|terminal (repeatable or comma-separated)")
+	cmd.Flags().StringArrayVar(&opts.Formats, "format", nil, "report format(s): sarif|json|markdown|html|terminal|junit|csv (repeatable or comma-separated)")
+
+	cmd.Flags().BoolVar(&opts.Enrich, "enrich", false, "fetch EPSS scores and CISA KEV data to enrich findings with priority labels")
+	cmd.Flags().StringVar(&opts.Diff, "diff", "", "restrict findings to files changed relative to this git ref (e.g. HEAD, main)")
 
 	return cmd
 }
 
 func runScan(cmd *cobra.Command, opts *scanOptions) error {
 	uiR := uiFrom(cmd)
-	scanPlanSemgrepRulesets = nil
-	scanPlanTrivyScanners = nil
+
+	if uiR != nil && !opts.CI {
+		printBrandTo(cmd.OutOrStdout(), uiR)
+		fmt.Fprintln(cmd.OutOrStdout())
+	}
 
 	// 1. Resolve target
 	target, err := resolveTarget(opts.Target)
@@ -142,6 +153,9 @@ func runScan(cmd *cobra.Command, opts *scanOptions) error {
 	if opts.Severity != "" {
 		cfg.SeverityThreshold = model.Severity(strings.ToLower(opts.Severity))
 	}
+	if opts.Model != "" {
+		cfg.LLM.Model = opts.Model
+	}
 	if len(opts.Only) > 0 {
 		cfg.Scanners = opts.Only
 	}
@@ -170,7 +184,13 @@ func runScan(cmd *cobra.Command, opts *scanOptions) error {
 	// 4b. Run the router (LLM or default). The router decides which scanners
 	// to enable based on the project; the user's --only flag wins if set.
 	llmEnabled := cfg.LLMEnabled(cliLLM)
-	r := selectRouter(llmEnabled, cfg, profile)
+	if err := prepareLLMSession(cmd, cfg, llmEnabled, opts.PickModel); err != nil {
+		return err
+	}
+	r, err := selectRouter(llmEnabled, cfg, profile)
+	if err != nil {
+		return err
+	}
 	plan, err := r.Route(profile)
 	if err != nil {
 		return fmt.Errorf("router: %w", err)
@@ -190,12 +210,9 @@ func runScan(cmd *cobra.Command, opts *scanOptions) error {
 	if len(plan.IgnorePatterns) > 0 && len(cfg.IgnorePatterns) == 0 {
 		cfg.IgnorePatterns = plan.IgnorePatterns
 	}
-	if len(plan.SemgrepRulesets) > 0 {
-		// stash on cfg via a temporary side channel; buildScanners reads it
-		scanPlanSemgrepRulesets = plan.SemgrepRulesets
-	}
-	if len(plan.TrivyScanners) > 0 {
-		scanPlanTrivyScanners = plan.TrivyScanners
+	selection := scannerSelection{
+		SemgrepRulesets: plan.SemgrepRulesets,
+		TrivyScanners:   plan.TrivyScanners,
 	}
 
 	if opts.Verbose {
@@ -231,32 +248,39 @@ func runScan(cmd *cobra.Command, opts *scanOptions) error {
 		fmt.Fprintf(cmd.OutOrStdout(), "%s loc=%d  files=%d\n",
 			key("loc:"), profile.TotalLOC, profile.FileCount)
 		fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", key("hash:"), profile.Hash())
-		fmt.Fprintf(cmd.OutOrStdout(), "%s enabled=%v  model=%s\n",
-			key("llm:"), cfg.LLMEnabled(cliLLM), cfg.LLM.Model)
+		fmt.Fprintf(cmd.OutOrStdout(), "%s enabled=%v  provider=%s  model=%s\n",
+			key("llm:"), cfg.LLMEnabled(cliLLM), cfg.LLM.Provider, llm.ResolveModel(cfg.LLM.Provider, cfg.LLM.Model))
 	}
 
 	// 5. Run scanners via the orchestrator (Phase 1.5: Semgrep end-to-end;
 	// Phase 1.6 will add Gitleaks + Trivy).
 	//
+	scanners := buildScanners(cfg, profile, selection)
+	var scannerNames []string
+	for _, s := range scanners {
+		scannerNames = append(scannerNames, s.Name())
+	}
+
 	// We wrap the OnProgress callback so the user sees a live spinner when
 	// stderr is a TTY (and ui.progress isn't "off"/"plain"). Otherwise we
 	// fall back to one-line-per-event output (the existing behavior).
 	var progress ui.Progress
 	if uiR != nil && uiR.UseSpinner() {
 		progress = ui.NewProgress(ui.ProgressOptions{
-			Spinner: true,
-			Writer:  cmd.ErrOrStderr(),
-			Unicode: uiR.UnicodeEnabled(),
+			Spinner:  true,
+			Writer:   cmd.ErrOrStderr(),
+			Unicode:  uiR.UnicodeEnabled(),
+			Renderer: uiR,
+			Names:    scannerNames,
 		})
 	} else {
 		progress = ui.NewProgress(ui.ProgressOptions{
 			Spinner: false,
 			Writer:  cmd.ErrOrStderr(),
+			Names:    scannerNames,
 		})
 	}
 	defer progress.Stop()
-
-	scanners := buildScanners(cfg, profile)
 	bootstrappedTools, err := ensureScannersAvailable(cmd, scanners, shouldInstallMissingTools(opts, cmd), opts.CI)
 	if err != nil {
 		return err
@@ -328,6 +352,80 @@ func runScan(cmd *cobra.Command, opts *scanOptions) error {
 		filtered = append(filtered, f)
 	}
 
+	// 6b. Optional enrichment (EPSS + KEV).
+	if opts.Enrich {
+		enrichClient, err := enrichment.NewClient("")
+		if err != nil {
+			if opts.Verbose {
+				fmt.Fprintf(cmd.ErrOrStderr(), "enrichment: %v\n", err)
+			}
+		} else {
+			filtered = enrichClient.Enrich(filtered)
+			if opts.Verbose {
+				fmt.Fprintf(cmd.OutOrStdout(), "enrichment: applied EPSS+KEV to %d findings\n", len(filtered))
+			}
+		}
+	}
+
+	// 6c. Policy gate evaluation.
+	if len(cfg.Policies.Gates) > 0 {
+		gates := make([]policy.Gate, len(cfg.Policies.Gates))
+		for i, g := range cfg.Policies.Gates {
+			gates[i] = policy.Gate{Name: g.Name, FailOn: g.FailOn}
+		}
+		violations := policy.Evaluate(gates, filtered)
+		if len(violations) > 0 {
+			fmt.Fprint(cmd.ErrOrStderr(), policy.FormatViolations(violations))
+			if opts.CI {
+				return fmt.Errorf("policy: %d gate(s) violated", len(violations))
+			}
+		}
+	}
+
+	// 6d. Git diff filter — restrict to changed files.
+	if opts.Diff != "" {
+		changed, err := gitdiff.ChangedFiles(profile.Root, opts.Diff)
+		if err != nil {
+			if opts.Verbose {
+				fmt.Fprintf(cmd.ErrOrStderr(), "gitdiff: %v\n", err)
+			}
+			// Non-fatal: proceed without filtering.
+		} else {
+			before := len(filtered)
+			filtered = gitdiff.FilterFindingsByChanged(filtered, changed)
+			if opts.Verbose {
+				fmt.Fprintf(cmd.OutOrStdout(), "gitdiff: %d → %d findings (diff ref=%s, changed=%d files)\n",
+					before, len(filtered), opts.Diff, len(changed))
+			}
+		}
+	}
+
+	// Apply suppression file filtering (.cyberai-suppressions.yaml).
+	{
+		sf, sfErr := suppression.Load(profile.Root)
+		if sfErr != nil && opts.Verbose {
+			msg := fmt.Sprintf("suppressions: %v", sfErr)
+			if uiR != nil {
+				msg = uiR.WarningStyle().Render(msg)
+			}
+			fmt.Fprintln(cmd.ErrOrStderr(), msg)
+		}
+		if sfErr == nil && len(sf.Suppressions) > 0 {
+			unsuppressed, suppCount, expiredCount := sf.FilterFindings(filtered)
+			filtered = unsuppressed
+			if opts.Verbose {
+				key := func(s string) string {
+					if uiR != nil {
+						return uiR.KeyStyle().Render(s)
+					}
+					return s
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%s %d suppressed by .cyberai-suppressions.yaml (%d via expired rules)\n",
+					key("suppressions:"), suppCount, expiredCount)
+			}
+		}
+	}
+
 	if opts.Verbose {
 		key := func(s string) string {
 			if uiR != nil {
@@ -368,8 +466,16 @@ func runScan(cmd *cobra.Command, opts *scanOptions) error {
 	// report; SARIF/JSON/Markdown stay machine-parseable for CI.
 	summaryHTML := ""
 	if llmEnabled && !opts.CI && hasFormat(resolveFormats(opts, cfg), "html") {
-		sum, err := summarizer.NewGemini(cfg.LLM.Model).Summarize(filtered)
+		sumr, err := summarizer.NewLLM(cfg.LLM.Provider, cfg.LLM.Model)
 		if err != nil {
+			if opts.Verbose {
+				msg := fmt.Sprintf("summarizer setup: %v", err)
+				if uiR != nil {
+					msg = uiR.WarningStyle().Render(msg)
+				}
+				fmt.Fprintln(cmd.ErrOrStderr(), msg)
+			}
+		} else if sum, err := sumr.Summarize(filtered); err != nil {
 			// Summarizer failure is non-fatal: log and continue with no banner.
 			if opts.Verbose {
 				msg := fmt.Sprintf("summarizer: %v", err)
@@ -385,7 +491,7 @@ func runScan(cmd *cobra.Command, opts *scanOptions) error {
 				if uiR != nil {
 					key = uiR.KeyStyle().Render(key)
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s generated by %s\n", key, cfg.LLM.Model)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s generated by %s/%s\n", key, cfg.LLM.Provider, cfg.LLM.Model)
 			}
 		}
 	}
@@ -447,14 +553,14 @@ func runScan(cmd *cobra.Command, opts *scanOptions) error {
 // Trivy is multi-category: it can run as SCA, IaC, or license scanning.
 // Secrets are handled by Gitleaks, so `--only secrets` does not implicitly
 // pull in Trivy. If no Trivy-relevant categories are enabled, we don't run it.
-func buildScanners(cfg *config.Config, profile *project.Profile) []scanner.NormalizingScanner {
+func buildScanners(cfg *config.Config, profile *project.Profile, selection scannerSelection) []scanner.NormalizingScanner {
 	var out []scanner.NormalizingScanner
 
 	if cfg.IsScannerEnabled("sast") {
 		// Prefer the router's semgrep rulesets if any; otherwise infer.
-		rulesets := scanPlanSemgrepRulesets
+		rulesets := selection.SemgrepRulesets
 		if len(rulesets) == 0 {
-			rulesets = pickSemgrepConfigs(profile)
+			rulesets = router.DefaultSemgrepRulesets(profile)
 		}
 		out = append(out, &scanner.Semgrep{
 			Configs: rulesets,
@@ -475,6 +581,15 @@ func buildScanners(cfg *config.Config, profile *project.Profile) []scanner.Norma
 
 	if cfg.IsScannerEnabled("cicd") && profile.HasCI {
 		out = append(out, &scanner.Zizmor{})
+		out = append(out, &scanner.Actionlint{})
+	}
+
+	if cfg.IsScannerEnabled("sca") {
+		out = append(out, &scanner.Grype{})
+		out = append(out, &scanner.OSVScanner{})
+		if hasLanguage(profile, "go") {
+			out = append(out, &scanner.Govulncheck{})
+		}
 	}
 
 	// Trivy covers SCA, IaC, and license.
@@ -490,7 +605,7 @@ func buildScanners(cfg *config.Config, profile *project.Profile) []scanner.Norma
 	}
 	// Router may have specified additional trivy scanners; merge them in, but
 	// never widen beyond the categories the user/config explicitly enabled.
-	for _, s := range scanPlanTrivyScanners {
+	for _, s := range selection.TrivyScanners {
 		if !trivyScannerAllowed(cfg, s) {
 			continue
 		}
@@ -521,33 +636,16 @@ func projectHasIaC(profile *project.Profile) bool {
 	return profile.HasTerraform || profile.HasK8s || profile.HasAnsible || profile.HasDocker || profile.HasCI
 }
 
-// pickSemgrepConfigs maps detected languages to Semgrep's language-specific
-// rulesets. We start with security-audit + owasp-top-ten, which are language-
-// agnostic and catch the common stuff. Then we add language packs for each
-// detected language.
-func pickSemgrepConfigs(p *project.Profile) []string {
-	configs := []string{"p/security-audit", "p/owasp-top-ten"}
-	for _, lang := range p.Languages {
-		switch lang {
-		case "go":
-			configs = append(configs, "p/golang")
-		case "javascript":
-			configs = append(configs, "p/javascript", "p/nodejs")
-		case "typescript":
-			configs = append(configs, "p/typescript")
-		case "python":
-			configs = append(configs, "p/python")
-		case "rust":
-			configs = append(configs, "p/rust")
-		case "java":
-			configs = append(configs, "p/java")
-		case "ruby":
-			configs = append(configs, "p/ruby")
-		case "php":
-			configs = append(configs, "p/php")
+func hasLanguage(profile *project.Profile, lang string) bool {
+	if profile == nil {
+		return false
+	}
+	for _, l := range profile.Languages {
+		if strings.EqualFold(l, lang) {
+			return true
 		}
 	}
-	return configs
+	return false
 }
 
 func resolveTarget(t string) (string, error) {
@@ -661,7 +759,7 @@ func writeReports(cmd *cobra.Command, outputDir string, rep *reporter.Report, fo
 	paths := map[string]string{}
 	var firstErr error
 	for _, f := range formats {
-		// "terminal" is rendered to stdout, not a file — handled in the caller.
+		// "terminal" is rendered to stdout, not a file - handled in the caller.
 		if f == "terminal" {
 			continue
 		}
@@ -697,6 +795,12 @@ func writeReports(cmd *cobra.Command, outputDir string, rep *reporter.Report, fo
 		case "sarif":
 			data, err = reporter.SARIF(rep, Version)
 			ext = ".sarif.json"
+		case "junit":
+			data, err = reporter.JUnit(rep)
+			ext = ".junit.xml"
+		case "csv":
+			data, err = reporter.CSV(rep)
+			ext = ".csv"
 		default:
 			firstErr = fmt.Errorf("unknown format: %s", f)
 			continue
@@ -716,7 +820,7 @@ func writeReports(cmd *cobra.Command, outputDir string, rep *reporter.Report, fo
 		}
 		paths[f] = p
 		if opts := cmd; opts != nil {
-			// No-op; just to keep cmd referenced for future --verbose logging.
+			// Keep cmd referenced for future verbose logging.
 			_ = opts
 		}
 	}

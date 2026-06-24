@@ -80,7 +80,7 @@ CyberAI currently shells out to:
 - **Hadolint** for Dockerfile linting.
 - **Zizmor** for GitHub Actions security checks.
 
-Interactive scans can auto-bootstrap missing scanners. You can also manage them directly:
+Scans skip missing scanners by default. Install scanners explicitly when you want the full toolchain:
 
 ```bash
 cyberai tools list
@@ -153,19 +153,25 @@ Run `cyberai <command> --help` for full command-specific flags.
 
 ## Optional LLM Router
 
-When `GEMINI_API_KEY` is set, CyberAI can use Gemini for two narrow tasks:
+If a Gemini API key is not detected in your shell environment, CyberAI will prompt you interactively on scan startup to enter one. 
 
-1. Router: chooses scanners and rulesets from the detected project profile.
-2. Summarizer: writes the executive summary for the HTML report.
+Once provided, **CyberAI persists your API key and preferred model choice in a global configuration file** (`~/.cyberai/config.json`) so that you do not have to enter them again on future runs. 
 
-Disable LLM behavior with:
+CyberAI uses Gemini for two main tasks:
+1. **Router**: chooses which scanners and rulesets to run based on the detected project profile.
+2. **Summarizer**: writes the security executive summary for the HTML report.
 
+You can switch your preferred Gemini model choice at any time using the `--pick-model` flag:
+```bash
+cyberai scan --pick-model
+```
+
+Disable all LLM behavior with:
 ```bash
 cyberai scan --no-llm
 ```
 
-CI mode also disables it:
-
+CI mode also automatically disables LLM behavior:
 ```bash
 cyberai scan --ci
 ```
@@ -262,7 +268,5 @@ Useful future tools to integrate:
 
 - `govulncheck` for Go vulnerability reachability.
 - `osv-scanner` or `grype` for dependency coverage.
-- `checkov` or `kics` for IaC.
-- `hadolint` for Dockerfiles.
-- `zizmor` for GitHub Actions security.
+- `kics` or other IaC scanners.
 - Ecosystem-native audit tools such as `pip-audit` and `npm audit`.

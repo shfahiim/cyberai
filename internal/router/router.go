@@ -4,8 +4,8 @@
 //
 // The router takes a ProjectProfile (deterministic) and returns a ScanPlan
 // (which scanners to run, which rulesets, severity threshold, ignore
-// patterns). The plan is cached per project_hash so re-running on the same
-// repo costs zero LLM calls.
+// patterns). The plan is cached per project/profile/provider/model policy so
+// re-running on the same repo under the same routing policy costs zero LLM calls.
 //
 // Two implementations live in this package:
 //
@@ -13,9 +13,8 @@
 //     without any LLM call. Used when --no-llm is set, when no API key is
 //     available, or when the LLM call fails.
 //
-//   - GeminiRouter (in gemini.go): one Gemini 2.5 Flash call with structured
-//     JSON output mode, with a graceful fallback to DefaultRouter on any
-//     error.
+//   - LLMRouter (in llm.go): one structured LLM call with a graceful fallback
+//     to DefaultRouter on any error.
 //
 // Both implementations satisfy the Router interface so the rest of the
 // pipeline doesn't care which one is active.
@@ -61,26 +60,29 @@ type ScanPlan struct {
 	// scan reports so users can audit the LLM's decisions.
 	Reasoning string `json:"reasoning"`
 
-	// ProjectHash is the cache key (from project.Profile.Hash()).
+	// ProjectHash is the deterministic hash of the project profile.
 	ProjectHash string `json:"project_hash"`
 
 	// FromCache is true if this plan was loaded from disk instead of
 	// freshly generated. Logged for visibility.
 	FromCache bool `json:"from_cache"`
 
-	// Source identifies which router produced this plan ("default" or
-	// "gemini" or "cache"). Logged for transparency.
+	// Source identifies which router produced this plan ("default",
+	// provider name, or "cache"). Logged for transparency.
 	Source string `json:"source"`
 
 	// GeneratedAt is when the plan was produced.
 	GeneratedAt time.Time `json:"generated_at"`
+
+	// CachedAt is when the plan was written to the cache. Used for TTL checks.
+	CachedAt time.Time `json:"cached_at,omitempty"`
 }
 
 // Router is the interface every implementation satisfies.
 type Router interface {
 	// Route returns a ScanPlan for the given profile.
 	Route(profile *project.Profile) (*ScanPlan, error)
-	// Name returns the router's identity ("default", "gemini", ...).
+	// Name returns the router's identity ("default", provider name, ...).
 	Name() string
 }
 
@@ -103,7 +105,7 @@ func (d *DefaultRouter) Route(p *project.Profile) (*ScanPlan, error) {
 	scanners := []string{"sast", "secrets", "sca"}
 
 	// Enable IaC only when there's actual IaC to scan. Without it,
-	// trivy runs vuln+misconfig+secret for nothing.
+	// trivy runs vuln+misconfig for nothing.
 	if p.HasTerraform || p.HasAnsible || p.HasK8s || p.HasDocker {
 		scanners = append(scanners, "iac")
 	}
@@ -113,36 +115,11 @@ func (d *DefaultRouter) Route(p *project.Profile) (*ScanPlan, error) {
 	if p.HasCI {
 		scanners = append(scanners, "cicd")
 	}
-	// License scanning only when there's a manifest we can scan.
 	if len(p.Manifests) > 0 {
 		scanners = append(scanners, "license")
 	}
 
-	// Language-specific semgrep configs (mirrors what buildScanners does
-	// in the CLI — we duplicate here so the router's plan is the source
-	// of truth).
-	rulesets := []string{"p/security-audit", "p/owasp-top-ten"}
-	for _, lang := range p.Languages {
-		switch lang {
-		case "go":
-			rulesets = append(rulesets, "p/golang")
-		case "javascript":
-			rulesets = append(rulesets, "p/javascript", "p/nodejs")
-		case "typescript":
-			rulesets = append(rulesets, "p/typescript")
-		case "python":
-			rulesets = append(rulesets, "p/python")
-		case "rust":
-			rulesets = append(rulesets, "p/rust")
-		case "java":
-			rulesets = append(rulesets, "p/java")
-		case "ruby":
-			rulesets = append(rulesets, "p/ruby")
-		case "php":
-			rulesets = append(rulesets, "p/php")
-		}
-	}
-
+	rulesets := DefaultSemgrepRulesets(p)
 	trivyScanners := []string{"vuln", "misconfig"}
 	if len(p.Manifests) > 0 {
 		trivyScanners = append(trivyScanners, "license")

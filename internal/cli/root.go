@@ -32,7 +32,7 @@ func NewRootCmd() *cobra.Command {
 			"CyberAI - static + security analysis for software projects.",
 			"",
 			"Phase 1 ships deterministic scanners (Semgrep, Gitleaks, Trivy, Checkov, Hadolint, Zizmor) with a",
-			"thin Gemini 2.5 Flash router that decides which scanners and rules to run",
+			"thin Gemini router that decides which scanners and rules to run",
 			"based on the project. The scanning itself is local, deterministic, and",
 			"optional-LLM via --no-llm.",
 			"",
@@ -134,6 +134,9 @@ func NewRootCmd() *cobra.Command {
 		newToolsCmd(),
 		newInitCmd(),
 		newReportCmd(),
+		newAnimCmd(),
+		newSuppressCmd(),
+		newSbomCmd(),
 	)
 
 	return root

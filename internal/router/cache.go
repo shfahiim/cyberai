@@ -5,23 +5,32 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // DefaultCacheDir is where router plans are stored. Falls back to
 // ~/.cyberai/cache/router when empty.
 const DefaultCacheDir = "~/.cyberai/cache/router"
 
-// Cache persists ScanPlans keyed by project hash so re-runs on the same
-// repo cost zero LLM calls.
-//
-// Cache files are simple JSON. They're cheap to write, easy to invalidate
-// (just delete the dir), and inspectable by humans for debugging.
+// DefaultTTL is how long a cached ScanPlan is considered valid.
+const DefaultTTL = 24 * time.Hour
+
+// Cache persists ScanPlans keyed by a versioned cache key so re-runs on the
+// same project/profile/provider/model/policy combination cost zero LLM calls.
 type Cache struct {
 	Dir string
+	// TTL controls how long cached plans are valid. Zero uses DefaultTTL.
+	TTL time.Duration
 }
 
-// NewCache returns a Cache rooted at dir. Empty dir means the default
-// (~/.cyberai/cache/router).
+// ttl returns the effective TTL, falling back to DefaultTTL.
+func (c *Cache) ttl() time.Duration {
+	if c.TTL > 0 {
+		return c.TTL
+	}
+	return DefaultTTL
+}
+
 func NewCache(dir string) (*Cache, error) {
 	if dir == "" {
 		dir = DefaultCacheDir
@@ -36,9 +45,9 @@ func NewCache(dir string) (*Cache, error) {
 	return &Cache{Dir: expanded}, nil
 }
 
-// Get loads a plan by project hash. Returns (nil, nil) on miss.
-func (c *Cache) Get(hash string) (*ScanPlan, error) {
-	p := c.path(hash)
+// Get loads a plan by cache key. Returns (nil, nil) on miss.
+func (c *Cache) Get(key string) (*ScanPlan, error) {
+	p := c.path(key)
 	data, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -52,30 +61,31 @@ func (c *Cache) Get(hash string) (*ScanPlan, error) {
 	}
 	plan.FromCache = true
 	plan.Source = "cache"
+	// Evict stale entries.
+	if !plan.CachedAt.IsZero() && time.Since(plan.CachedAt) > c.ttl() {
+		return nil, nil
+	}
 	return &plan, nil
 }
 
-// Put writes a plan to disk, keyed by project hash.
-func (c *Cache) Put(plan *ScanPlan) error {
+// Put writes a plan to disk using the supplied cache key.
+func (c *Cache) Put(key string, plan *ScanPlan) error {
 	if plan == nil {
 		return fmt.Errorf("nil plan")
 	}
+	plan.CachedAt = time.Now().UTC()
 	data, err := json.MarshalIndent(plan, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal plan: %w", err)
 	}
-	return os.WriteFile(c.path(plan.ProjectHash), data, 0o644)
+	return os.WriteFile(c.path(key), data, 0o644)
 }
 
-func (c *Cache) path(hash string) string {
-	// Sanitize hash for filesystem: keep the sha256: prefix but replace
-	// any non-alphanumeric chars with underscores. The router's hash is
-	// already sanitized ("sha256:abc..."), so this is a no-op in practice.
-	safe := make([]rune, 0, len(hash))
-	for _, r := range hash {
+func (c *Cache) path(key string) string {
+	safe := make([]rune, 0, len(key))
+	for _, r := range key {
 		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
-			r == '-' || r == '_' || r == ':':
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-' || r == '_' || r == ':':
 			safe = append(safe, r)
 		default:
 			safe = append(safe, '_')
@@ -84,9 +94,6 @@ func (c *Cache) path(hash string) string {
 	return filepath.Join(c.Dir, string(safe)+".json")
 }
 
-// expandHome replaces a leading "~" with the user's home directory.
-// We avoid os/user to keep this package dep-free; we shell out to the
-// env var HOME (set on every Unix-like system).
 func expandHome(p string) (string, error) {
 	if len(p) == 0 || p[0] != '~' {
 		return p, nil

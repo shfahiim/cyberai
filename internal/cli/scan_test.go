@@ -88,6 +88,16 @@ func TestRunScan_NoLLMOverridesCI(t *testing.T) {
 	}
 }
 
+func TestShouldInstallMissingTools_ExplicitOnly(t *testing.T) {
+	cmd := NewRootCmd()
+	if shouldInstallMissingTools(&scanOptions{}, cmd) {
+		t.Fatal("missing scanner installs should require --install-missing")
+	}
+	if !shouldInstallMissingTools(&scanOptions{InstallMissing: true}, cmd) {
+		t.Fatal("--install-missing should enable scanner installation")
+	}
+}
+
 func TestRunScan_RejectsFileAsTarget(t *testing.T) {
 	dir := t.TempDir()
 	f := filepath.Join(dir, "f.txt")

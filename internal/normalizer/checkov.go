@@ -40,12 +40,26 @@ func Checkov(raw []byte) ([]model.Finding, error) {
 	if trimmed == "" {
 		return nil, nil
 	}
-	var out checkovOutput
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, fmt.Errorf("parse checkov JSON: %w", err)
+	var list []checkovOutput
+	if strings.HasPrefix(trimmed, "[") {
+		if err := json.Unmarshal(raw, &list); err != nil {
+			return nil, fmt.Errorf("parse checkov JSON array: %w", err)
+		}
+	} else {
+		var out checkovOutput
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return nil, fmt.Errorf("parse checkov JSON object: %w", err)
+		}
+		list = []checkovOutput{out}
 	}
-	findings := make([]model.Finding, 0, len(out.Results.FailedChecks))
-	for _, c := range out.Results.FailedChecks {
+
+	var allChecks []checkovCheck
+	for _, item := range list {
+		allChecks = append(allChecks, item.Results.FailedChecks...)
+	}
+
+	findings := make([]model.Finding, 0, len(allChecks))
+	for _, c := range allChecks {
 		file := firstNonEmpty(c.RepoFilePath, c.FilePath)
 		start, end := lineRange(c.FileLineRange)
 		desc := c.CheckName

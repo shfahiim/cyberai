@@ -41,15 +41,8 @@ type scanSummary struct {
 	BootstrappedTools []string          `json:"bootstrapped_tools,omitempty"`
 }
 
-func shouldInstallMissingTools(opts *scanOptions, cmd *cobra.Command) bool {
-	if opts.InstallMissing {
-		return true
-	}
-	if opts.CI {
-		return false
-	}
-	uiR := uiFrom(cmd)
-	return uiR != nil && (uiR.StdoutIsTTY() || uiR.StderrIsTTY())
+func shouldInstallMissingTools(opts *scanOptions, _ *cobra.Command) bool {
+	return opts.InstallMissing
 }
 
 func ensureScannersAvailable(cmd *cobra.Command, scanners []scanner.NormalizingScanner, installMissing bool, ci bool) ([]string, error) {
@@ -66,7 +59,13 @@ func ensureScannersAvailable(cmd *cobra.Command, scanners []scanner.NormalizingS
 			missing = append(missing, name)
 		}
 	}
-	if len(missing) == 0 || !installMissing {
+	if len(missing) == 0 {
+		return nil, nil
+	}
+	if !installMissing {
+		if !ci {
+			printBootstrapMessage(cmd, "warning", fmt.Sprintf("skipping missing scanners: %s (run with --install-missing to install)", strings.Join(missing, ", ")))
+		}
 		return nil, nil
 	}
 
@@ -175,20 +174,50 @@ func printPrettyScanSummary(cmd *cobra.Command, summary *scanSummary) {
 		fmt.Fprintf(w, "%s %s\n", scanKey(uiR, "findings:"), strings.Join(parts, "  "))
 	}
 
-	rows := make([][]string, 0, len(summary.FormatPaths))
+	hasArtifacts := false
+	for _, format := range summary.Formats {
+		if format != "terminal" && summary.FormatPaths[format] != "" {
+			hasArtifacts = true
+			break
+		}
+	}
+	if !hasArtifacts {
+		return
+	}
+
+	fmt.Fprintln(w)
+
+	artifactCol := "ARTIFACT"
+	pathCol := "PATH"
+	if uiR != nil {
+		artifactCol = uiR.DimStyle().Render(artifactCol)
+		pathCol = uiR.DimStyle().Render(pathCol)
+	}
+	fmt.Fprintf(w, "  %-10s  %s\n", artifactCol, pathCol)
+
 	for _, format := range summary.Formats {
 		if format == "terminal" {
 			continue
 		}
-		if path := summary.FormatPaths[format]; path != "" {
-			rows = append(rows, []string{format, path})
+		path := summary.FormatPaths[format]
+		if path == "" {
+			continue
 		}
+
+		paddedFormat := fmt.Sprintf("%-10s", format)
+		if uiR != nil {
+			paddedFormat = uiR.KeyStyle().Render(paddedFormat)
+		}
+
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			absPath = path
+		}
+		fileURL := "file://" + absPath
+		clickablePath := terminalHyperlink(fileURL, path)
+
+		fmt.Fprintf(w, "  %s  %s\n", paddedFormat, clickablePath)
 	}
-	if len(rows) == 0 {
-		return
-	}
-	fmt.Fprintln(w)
-	ui.RenderTable(w, []string{"ARTIFACT", "PATH"}, rows)
 }
 
 func severitySummaryParts(counts map[string]int, uiR *ui.Renderer) []string {
@@ -288,4 +317,8 @@ func resolveWithExistingParents(path string) (string, error) {
 		tail = append(tail, filepath.Base(current))
 		current = parent
 	}
+}
+
+func terminalHyperlink(url, text string) string {
+	return "\x1b]8;;" + url + "\x1b\\" + text + "\x1b]8;;\x1b\\"
 }

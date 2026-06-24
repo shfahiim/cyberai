@@ -1,5 +1,33 @@
 # CyberAI — CLI Security & Code Analysis Agent
 
+## Current Project Status (As of June 2026)
+
+We have completed the implementation of **Phase 1** of CyberAI, creating a highly polished single-binary CLI orchestration tool with an LLM router and summarizer layer.
+
+### 1. Completed Milestones
+*   **Orchestration Pipeline**: Runs scans concurrently across all enabled scanners and collects, filters, and formats findings.
+*   **Project Profiler (`internal/project`)**: Deterministic parsing of targets to build a codebase profile (identifying languages, files, LOC, Docker, and IaC settings).
+*   **LLM Router (`internal/router`)**: Integrates Gemini to dynamically determine a scan plan (which scanners to run, semgrep rulesets, severity thresholds, and ignore patterns).
+*   **Integrated Scanners (`internal/scanner`)**: Fully wraps Semgrep, Gitleaks, Hadolint, Trivy, Checkov, and Zizmor.
+*   **Unified Normalization (`internal/normalizer`)**: Standardized mapping to digest findings from all third-party tool configurations into a common model with CVSS / CWE attributes.
+*   **Report Generation (`internal/reporter`)**: Exports reports to SARIF, JSON, Markdown, Terminal, and HTML formats.
+*   **Local Tool Installation (`internal/tools`)**: Automatic installation and virtual environment management routines for bundled scanners.
+*   **Baseline Comparisons (`internal/baseline`)**: Diffing capability to only report new findings.
+
+### 2. Key Enhancements & Robustness Improvements
+*   **Global Configuration Manager (`internal/llm`)**: Persists entered Gemini API keys and model preferences under `~/.cyberai/config.json` so users are not prompted on every invocation.
+*   **Atomic Downloader/Extractor (`internal/tools`)**: Tools are downloaded and extracted atomically (`.tmp` file renaming) to avoid binary corruption on interrupted network runs.
+*   **Flexible Checkov Parser (`internal/normalizer`)**: Handles both JSON objects and JSON arrays of checkov outputs for multi-framework (e.g. Terraform + Kubernetes) codebases.
+*   **Premium HTML Interface (`internal/reporter`)**: A clean shadcn-like responsive dashboard featuring:
+    *   Dark / light theme support
+    *   Client-side search and severity filtering
+    *   Stylized brand ASCII banners and animated loading progress styling.
+
+### 3. Next Steps (Phase 2 Planning)
+*   **Phase 2** (the agentic layer with ReAct subagents `scanner`, `investigator`, and `advisor` for analyzing findings and formulating remediation guides) remains in the design and planning phase.
+
+---
+
 ## Context
 
 The user wants to build a CLI tool that runs static code analysis and security analysis on a software project, then produces a consolidated report. After clarifying questions, the direction is:

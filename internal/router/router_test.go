@@ -91,7 +91,7 @@ func TestCache_PutGet(t *testing.T) {
 		ProjectHash:       "sha256:test",
 		Source:            "default",
 	}
-	if err := c.Put(plan); err != nil {
+	if err := c.Put("sha256:test", plan); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	got, err := c.Get("sha256:test")
@@ -162,10 +162,11 @@ func TestNewGemini_NoKey_FallsBack(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	// Ensure no API key in env.
 	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("GOOGLE_API_KEY", "")
 	cache, _ := NewCache(t.TempDir())
-	r, live := NewGemini("gemini-2.5-flash", cache)
+	r, live := NewGemini("gemini-3.5-flash", cache)
 	if live {
-		t.Skip("GEMINI_API_KEY is set in env; skipping fallback test")
+		t.Skip("Gemini API key is set in env; skipping fallback test")
 	}
 	plan, err := r.Route(sampleProfile())
 	if err != nil {
@@ -174,7 +175,7 @@ func TestNewGemini_NoKey_FallsBack(t *testing.T) {
 	if plan.Source != "fallback(gemini)" {
 		t.Errorf("Source = %s, want fallback(gemini)", plan.Source)
 	}
-	if !strings.Contains(plan.Reasoning, "no GEMINI_API_KEY") {
+	if !strings.Contains(plan.Reasoning, "no API key configured for provider gemini") {
 		t.Errorf("reasoning should mention missing API key, got %q", plan.Reasoning)
 	}
 	// Fallback plan should still be sensible (default router output).
@@ -184,7 +185,7 @@ func TestNewGemini_NoKey_FallsBack(t *testing.T) {
 }
 
 func TestGeminiRouter_NilProfile(t *testing.T) {
-	r := &GeminiRouter{Fallback: NewDefault()}
+	r := &LLMRouter{Provider: "gemini", Fallback: NewDefault()}
 	if _, err := r.Route(nil); err == nil {
 		t.Error("expected error for nil profile")
 	}

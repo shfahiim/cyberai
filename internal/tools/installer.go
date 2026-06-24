@@ -131,12 +131,25 @@ func (m *Manager) List() ([]ListResult, error) {
 	return out, nil
 }
 
+// IsInstallable returns true if the tool supports automated installation.
+func (m *Manager) IsInstallable(name string) bool {
+	switch name {
+	case "semgrep", "gitleaks", "trivy", "checkov", "hadolint", "zizmor":
+		return true
+	default:
+		return false
+	}
+}
+
 // Install fetches and installs the named tool. Empty name installs all
 // declared tools.
 func (m *Manager) Install(name string, opts InstallOptions) error {
 	if name == "" {
 		var firstErr error
 		for _, t := range All() {
+			if !m.IsInstallable(t.Name) {
+				continue
+			}
 			if err := m.Install(t.Name, opts); err != nil && firstErr == nil {
 				firstErr = err
 			}
@@ -157,6 +170,10 @@ func (m *Manager) Install(name string, opts InstallOptions) error {
 	case "zizmor":
 		return m.installPythonPackageTool("zizmor", "zizmor", "zizmor", opts)
 	default:
+		t, ok := findTool(name)
+		if ok {
+			return fmt.Errorf("tool %s does not support automated installation; please install it manually: %s", name, t.Install)
+		}
 		return fmt.Errorf("unknown tool: %s", name)
 	}
 }
@@ -491,10 +508,13 @@ func (m *Manager) downloadBinary(toolName, binary, url string, opts InstallOptio
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("%s: download: status %d", toolName, resp.StatusCode)
 	}
-	out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+	tmpDest := dest + ".tmp"
+	out, err := os.OpenFile(tmpDest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
 	if err != nil {
-		return fmt.Errorf("%s: create binary: %w", toolName, err)
+		return fmt.Errorf("%s: create temporary binary: %w", toolName, err)
 	}
+	defer os.Remove(tmpDest)
+
 	if _, err := io.Copy(out, resp.Body); err != nil {
 		out.Close()
 		return fmt.Errorf("%s: write binary: %w", toolName, err)
@@ -502,8 +522,11 @@ func (m *Manager) downloadBinary(toolName, binary, url string, opts InstallOptio
 	if err := out.Close(); err != nil {
 		return fmt.Errorf("%s: close binary: %w", toolName, err)
 	}
-	if err := os.Chmod(dest, 0o755); err != nil {
+	if err := os.Chmod(tmpDest, 0o755); err != nil {
 		return fmt.Errorf("%s: chmod: %w", toolName, err)
+	}
+	if err := os.Rename(tmpDest, dest); err != nil {
+		return fmt.Errorf("%s: rename binary: %w", toolName, err)
 	}
 	return m.recordBundledState(toolName, binary, "github")
 }
@@ -554,15 +577,20 @@ func extractTarGz(r io.Reader, destDir, binary string) error {
 		if hdr.FileInfo().IsDir() {
 			continue
 		}
-		out, err := os.OpenFile(filepath.Join(destDir, binary), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+		tmpDest := filepath.Join(destDir, binary+".tmp")
+		out, err := os.OpenFile(tmpDest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
 		if err != nil {
 			return err
 		}
+		defer os.Remove(tmpDest)
 		if _, err := io.Copy(out, tr); err != nil {
 			out.Close()
 			return err
 		}
-		return out.Close()
+		if err := out.Close(); err != nil {
+			return err
+		}
+		return os.Rename(tmpDest, filepath.Join(destDir, binary))
 	}
 }
 
@@ -587,15 +615,20 @@ func extractZip(r io.Reader, destDir, binary string) error {
 			return err
 		}
 		defer src.Close()
-		out, err := os.OpenFile(filepath.Join(destDir, binary), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+		tmpDest := filepath.Join(destDir, binary+".tmp")
+		out, err := os.OpenFile(tmpDest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
 		if err != nil {
 			return err
 		}
+		defer os.Remove(tmpDest)
 		if _, err := io.Copy(out, src); err != nil {
 			out.Close()
 			return err
 		}
-		return out.Close()
+		if err := out.Close(); err != nil {
+			return err
+		}
+		return os.Rename(tmpDest, filepath.Join(destDir, binary))
 	}
 	return fmt.Errorf("%s not found in archive", binary)
 }

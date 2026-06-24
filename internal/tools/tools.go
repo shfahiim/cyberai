@@ -56,6 +56,31 @@ func All() []Tool {
 			Category: "cicd",
 			Install:  "cyberai tools install zizmor OR pipx install zizmor",
 		},
+		{
+			Name: "grype", Binary: "grype",
+			Category: "sca",
+			Install:  "curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin",
+		},
+		{
+			Name: "osv-scanner", Binary: "osv-scanner",
+			Category: "sca",
+			Install:  "go install github.com/google/osv-scanner/cmd/osv-scanner@latest",
+		},
+		{
+			Name: "actionlint", Binary: "actionlint",
+			Category: "cicd",
+			Install:  "go install github.com/rhysd/actionlint/cmd/actionlint@latest OR brew install actionlint",
+		},
+		{
+			Name: "syft", Binary: "syft",
+			Category: "sbom",
+			Install:  "curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin",
+		},
+		{
+			Name: "govulncheck", Binary: "govulncheck",
+			Category: "sca",
+			Install:  "go install golang.org/x/vuln/cmd/govulncheck@latest",
+		},
 	}
 }
 

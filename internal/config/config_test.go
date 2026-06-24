@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/shfahiim/cyberai/internal/llm"
 )
 
 func TestDefault(t *testing.T) {
@@ -11,8 +13,11 @@ func TestDefault(t *testing.T) {
 	if c.SeverityThreshold != "low" {
 		t.Errorf("default severity threshold = %q, want low", c.SeverityThreshold)
 	}
-	if c.LLM.Model != "gemini-2.5-flash" {
-		t.Errorf("default model = %q, want gemini-2.5-flash", c.LLM.Model)
+	if c.LLM.Provider != llm.DefaultProvider {
+		t.Errorf("default provider = %q, want %s", c.LLM.Provider, llm.DefaultProvider)
+	}
+	if c.LLM.Model != llm.ResolveModel(llm.DefaultProvider, "") {
+		t.Errorf("default model = %q", c.LLM.Model)
 	}
 }
 
@@ -40,7 +45,8 @@ output:
   path: /tmp/reports
 llm:
   enabled: false
-  model: gemini-2.5-pro
+  provider: gemini
+  model: gemini-3.1-pro-preview
 ui:
   color: never
   progress: off
@@ -59,7 +65,10 @@ ui:
 	if len(c.Scanners) != 2 || c.Scanners[0] != "sast" {
 		t.Errorf("scanners = %v", c.Scanners)
 	}
-	if c.LLM.Model != "gemini-2.5-pro" {
+	if c.LLM.Provider != "gemini" {
+		t.Errorf("provider = %q", c.LLM.Provider)
+	}
+	if c.LLM.Model != "gemini-3.1-pro-preview" {
 		t.Errorf("model = %q", c.LLM.Model)
 	}
 	if c.LLM.Enabled == nil || *c.LLM.Enabled != false {

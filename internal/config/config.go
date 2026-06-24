@@ -16,6 +16,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/shfahiim/cyberai/internal/llm"
 	"github.com/shfahiim/cyberai/internal/model"
 )
 
@@ -54,6 +55,9 @@ type Config struct {
 	// UI holds presentation knobs: color, progress, unicode glyphs.
 	// All keys optional — missing ⇒ auto.
 	UI UIConfig `yaml:"ui"`
+
+	// Policies holds named gates that can fail a CI scan.
+	Policies PoliciesConfig `yaml:"policies"`
 }
 
 // UIConfig controls terminal presentation. Empty values mean "auto".
@@ -80,11 +84,34 @@ type LLMConfig struct {
 	// (equivalent to --no-llm). nil = follow CLI flag.
 	Enabled *bool `yaml:"enabled"`
 
-	// Model overrides the default Gemini model. Empty = use default.
+	// Provider selects which LLM backend to use. Empty = use default.
+	Provider string `yaml:"provider"`
+
+	// Model overrides the default provider model. Empty = use provider default.
 	Model string `yaml:"model"`
 
 	// Summarize controls whether the post-scan summarizer runs.
 	Summarize *bool `yaml:"summarize"`
+}
+
+// GateConfig is one policy gate entry from .cyberai.yaml.
+type GateConfig struct {
+	Name   string `yaml:"name"`
+	FailOn string `yaml:"fail_on"`
+}
+
+// SLAConfig holds per-severity remediation SLA strings (e.g. "7d", "30d").
+type SLAConfig struct {
+	Critical string `yaml:"critical"`
+	High     string `yaml:"high"`
+	Medium   string `yaml:"medium"`
+	Low      string `yaml:"low"`
+}
+
+// PoliciesConfig is the `policies:` block in .cyberai.yaml.
+type PoliciesConfig struct {
+	Gates []GateConfig `yaml:"gates"`
+	SLA   SLAConfig    `yaml:"sla"`
 }
 
 // Default returns a Config with sensible defaults for a first run.
@@ -99,7 +126,8 @@ func Default() *Config {
 		},
 		LLM: LLMConfig{
 			Enabled:   nil, // follow CLI
-			Model:     "gemini-2.5-flash",
+			Provider:  llm.DefaultProvider,
+			Model:     llm.ResolveModel(llm.DefaultProvider, ""),
 			Summarize: nil,
 		},
 	}
@@ -137,8 +165,11 @@ func (c *Config) applyDefaults() {
 	if c.SeverityThreshold == "" {
 		c.SeverityThreshold = model.SeverityLow
 	}
+	if c.LLM.Provider == "" {
+		c.LLM.Provider = llm.DefaultProvider
+	}
 	if c.LLM.Model == "" {
-		c.LLM.Model = "gemini-2.5-flash"
+		c.LLM.Model = llm.ResolveModel(c.LLM.Provider, "")
 	}
 	if len(c.Output.Formats) == 0 {
 		c.Output.Formats = []string{"sarif", "json", "markdown", "html", "terminal"}
@@ -351,7 +382,8 @@ func WriteExample(path string) error {
 # writes an executive summary for the HTML report.
 # llm:
 #   enabled: true
-#   model: gemini-2.5-flash
+#   provider: gemini
+#   model: gemini-3.5-flash
 #   summarize: true
 
 # Path to a baseline JSON to diff against. Empty = no baseline.

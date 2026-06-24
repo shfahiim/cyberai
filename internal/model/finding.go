@@ -117,6 +117,17 @@ type Finding struct {
 	FixVersion string   `json:"fix_version,omitempty"` // e.g. ">= 1.2.3" for deps
 	References []string `json:"references,omitempty"`
 
+	// Phase 2 enrichment
+	EPSSScore      float64   `json:"epss_score,omitempty"`
+	EPSSPercentile float64   `json:"epss_percentile,omitempty"`
+	IsInKEV        bool      `json:"is_in_kev,omitempty"`
+	FixAvailable   bool      `json:"fix_available,omitempty"`
+	IsReachable    *bool     `json:"is_reachable,omitempty"`
+	SLADeadline    time.Time `json:"sla_deadline,omitempty"`
+	Priority       string    `json:"priority,omitempty"`
+	FirstSeen      time.Time `json:"first_seen,omitempty"`
+	ComplianceTags []string  `json:"compliance_tags,omitempty"`
+
 	// Metadata is a free-form bag for tool-specific fields we don't normalize.
 	// Reports omit it by default; --verbose includes it.
 	Metadata map[string]string `json:"metadata,omitempty"`
@@ -157,6 +168,23 @@ func (f *Finding) AssignID() {
 	if f.ID == "" {
 		f.ID = f.Fingerprint()
 	}
+}
+
+// ComputePriority calculates a P0-P4 priority label from KEV, EPSS, and CVSS.
+func (f *Finding) ComputePriority() string {
+	if f.IsInKEV || (f.EPSSScore > 0.5 && f.CVSS >= 9.0) {
+		return "P0"
+	}
+	if f.EPSSScore > 0.1 || f.CVSS >= 9.0 {
+		return "P1"
+	}
+	if f.CVSS >= 7.0 {
+		return "P2"
+	}
+	if f.CVSS >= 4.0 || f.Severity == SeverityCritical || f.Severity == SeverityHigh {
+		return "P3"
+	}
+	return "P4"
 }
 
 // Normalize trims whitespace, lowercases severity, validates required fields.
