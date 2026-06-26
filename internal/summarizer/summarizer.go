@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/microcosm-cc/bluemonday"
 	"github.com/shfahiim/cyberai/internal/gemini"
 	"github.com/shfahiim/cyberai/internal/llm"
 	"github.com/shfahiim/cyberai/internal/model"
@@ -141,18 +142,16 @@ func digestFindings(findings []model.Finding) string {
 	return b.String()
 }
 
+var summarySanitizer = bluemonday.UGCPolicy()
+
 // sanitizeMarkdown removes dangerous HTML from LLM-generated markdown to prevent
 // XSS when the content is embedded in reports.
 func sanitizeMarkdown(s string) string {
-	// Strip dangerous block-level tags and their content.
-	for _, tag := range []string{"script", "style", "iframe", "object", "embed", "form"} {
-		s = stripTagBlock(s, tag)
-	}
-	// Strip self-closing dangerous tags.
-	for _, tag := range []string{"link", "meta", "base"} {
-		s = stripTagSelfClosing(s, tag)
-	}
-	// Remove javascript: URIs.
+	s = summarySanitizer.Sanitize(s)
+	return stripJavascriptURLs(s)
+}
+
+func stripJavascriptURLs(s string) string {
 	for {
 		lower := strings.ToLower(s)
 		idx := strings.Index(lower, "javascript:")
@@ -160,120 +159,6 @@ func sanitizeMarkdown(s string) string {
 			break
 		}
 		s = s[:idx] + s[idx+len("javascript:"):]
-	}
-	// Remove on* event handlers.
-	s = removeOnHandlers(s)
-	return s
-}
-
-// stripTagBlock removes <tag>...</tag> or <tag .../> blocks case-insensitively.
-func stripTagBlock(s, tag string) string {
-	for i := 0; i < 20; i++ { // limit iterations to prevent infinite loops
-		lower := strings.ToLower(s)
-		opener := "<" + tag
-		start := strings.Index(lower, opener)
-		if start < 0 {
-			break
-		}
-		// Verify the character after tag name is a space, > or /
-		aftTag := start + len(opener)
-		if aftTag < len(lower) {
-			nc := lower[aftTag]
-			if nc != ' ' && nc != '>' && nc != '/' && nc != '\t' && nc != '\n' && nc != '\r' {
-				break // not our tag
-			}
-		}
-		// Find closing tag.
-		closer := "</" + tag + ">"
-		end := strings.Index(lower[start:], closer)
-		if end >= 0 {
-			s = s[:start] + s[start+end+len(closer):]
-		} else {
-			// No close tag: remove to next >
-			gt := strings.Index(s[start:], ">")
-			if gt >= 0 {
-				s = s[:start] + s[start+gt+1:]
-			} else {
-				s = s[:start]
-				break
-			}
-		}
-	}
-	return s
-}
-
-// stripTagSelfClosing removes standalone tags like <link ...> or <meta ...>.
-func stripTagSelfClosing(s, tag string) string {
-	for i := 0; i < 20; i++ {
-		lower := strings.ToLower(s)
-		opener := "<" + tag
-		start := strings.Index(lower, opener)
-		if start < 0 {
-			break
-		}
-		aftTag := start + len(opener)
-		if aftTag < len(lower) {
-			nc := lower[aftTag]
-			if nc != ' ' && nc != '>' && nc != '/' && nc != '\t' && nc != '\n' && nc != '\r' {
-				break
-			}
-		}
-		gt := strings.Index(s[start:], ">")
-		if gt >= 0 {
-			s = s[:start] + s[start+gt+1:]
-		} else {
-			s = s[:start]
-			break
-		}
-	}
-	return s
-}
-
-// removeOnHandlers removes on* event handler attributes.
-func removeOnHandlers(s string) string {
-	for i := 0; i < 50; i++ {
-		lower := strings.ToLower(s)
-		// Find " on" followed by a letter
-		idx := -1
-		for j := 0; j+3 < len(lower); j++ {
-			if (lower[j] == ' ' || lower[j] == '\t') &&
-				lower[j+1] == 'o' && lower[j+2] == 'n' &&
-				lower[j+3] >= 'a' && lower[j+3] <= 'z' {
-				idx = j
-				break
-			}
-		}
-		if idx < 0 {
-			break
-		}
-		// Find '=' then skip value
-		rest := s[idx:]
-		eqIdx := strings.Index(rest, "=")
-		if eqIdx < 0 {
-			s = s[:idx] + s[idx+1:]
-			continue
-		}
-		valStart := idx + eqIdx + 1
-		if valStart >= len(s) {
-			s = s[:idx]
-			break
-		}
-		var valEnd int
-		quote := s[valStart]
-		if quote == '"' || quote == '\'' {
-			next := strings.IndexByte(s[valStart+1:], quote)
-			if next < 0 {
-				s = s[:idx]
-				break
-			}
-			valEnd = valStart + 1 + next + 1
-		} else {
-			valEnd = valStart
-			for valEnd < len(s) && s[valEnd] != ' ' && s[valEnd] != '>' && s[valEnd] != '\t' {
-				valEnd++
-			}
-		}
-		s = s[:idx] + s[valEnd:]
 	}
 	return s
 }

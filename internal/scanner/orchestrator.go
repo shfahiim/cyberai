@@ -157,11 +157,6 @@ func (r *Result) Aggregate() []model.Finding {
 	for _, sr := range r.Results {
 		out = append(out, sr.Findings...)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Severity.Rank() != out[j].Severity.Rank() {
-			return out[i].Severity.Rank() < out[j].Severity.Rank()
-		}
-		return out[i].File < out[j].File
-	})
+	model.SortFindings(out)
 	return out
 }

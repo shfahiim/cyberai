@@ -170,21 +170,77 @@ func (f *Finding) AssignID() {
 	}
 }
 
-// ComputePriority calculates a P0-P4 priority label from KEV, EPSS, and CVSS.
+// ComputePriority calculates a P0-P4 priority label from KEV, EPSS, CVSS,
+// reachability, and fix availability.
 func (f *Finding) ComputePriority() string {
-	if f.IsInKEV || (f.EPSSScore > 0.5 && f.CVSS >= 9.0) {
+	reachable := f.IsReachable == nil || *f.IsReachable
+
+	if f.IsInKEV && reachable {
 		return "P0"
 	}
-	if f.EPSSScore > 0.1 || f.CVSS >= 9.0 {
+	if f.EPSSScore > 0.5 && f.CVSS >= 9.0 && reachable {
+		return "P0"
+	}
+	if f.IsInKEV || (f.EPSSScore > 0.1 && reachable) || (f.CVSS >= 9.0 && reachable) {
 		return "P1"
 	}
-	if f.CVSS >= 7.0 {
+	if f.CVSS >= 7.0 && reachable {
 		return "P2"
 	}
 	if f.CVSS >= 4.0 || f.Severity == SeverityCritical || f.Severity == SeverityHigh {
 		return "P3"
 	}
+	if !reachable && (f.CVSS >= 4.0 || len(f.CVE) > 0) {
+		return "P3"
+	}
+	if f.FixAvailable {
+		return "P3"
+	}
 	return "P4"
+}
+
+// PriorityRank returns a sort key where lower means higher urgency.
+func PriorityRank(p string) int {
+	switch strings.ToUpper(strings.TrimSpace(p)) {
+	case "P0":
+		return 0
+	case "P1":
+		return 1
+	case "P2":
+		return 2
+	case "P3":
+		return 3
+	case "P4":
+		return 4
+	default:
+		return 99
+	}
+}
+
+// EffectivePriority returns the stored priority or computes one on demand.
+func (f Finding) EffectivePriority() string {
+	if f.Priority != "" {
+		return f.Priority
+	}
+	return f.ComputePriority()
+}
+
+// SortFindings orders findings by priority, severity, then file path.
+func SortFindings(findings []Finding) {
+	sort.Slice(findings, func(i, j int) bool {
+		pi := PriorityRank(findings[i].EffectivePriority())
+		pj := PriorityRank(findings[j].EffectivePriority())
+		if pi != pj {
+			return pi < pj
+		}
+		if findings[i].Severity.Rank() != findings[j].Severity.Rank() {
+			return findings[i].Severity.Rank() < findings[j].Severity.Rank()
+		}
+		if findings[i].File != findings[j].File {
+			return findings[i].File < findings[j].File
+		}
+		return findings[i].StartLine < findings[j].StartLine
+	})
 }
 
 // Normalize trims whitespace, lowercases severity, validates required fields.

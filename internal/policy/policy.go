@@ -29,6 +29,12 @@ type Gate struct {
 	FailOn string
 }
 
+// Context supplies optional finding metadata for policy expressions.
+type Context struct {
+	IsNew        func(model.Finding) bool
+	IsSuppressed func(model.Finding) bool
+}
+
 // Violation records a gate that failed and the findings that triggered it.
 type Violation struct {
 	Gate     Gate
@@ -36,7 +42,7 @@ type Violation struct {
 }
 
 // Evaluate runs each gate against findings and returns the gates that fired.
-func Evaluate(gates []Gate, findings []model.Finding) []Violation {
+func Evaluate(gates []Gate, findings []model.Finding, ctx Context) []Violation {
 	var violations []Violation
 	for _, g := range gates {
 		pred, err := parseExpression(g.FailOn)
@@ -46,7 +52,7 @@ func Evaluate(gates []Gate, findings []model.Finding) []Violation {
 		}
 		var matched []model.Finding
 		for _, f := range findings {
-			if pred(f) {
+			if pred(f, ctx) {
 				matched = append(matched, f)
 			}
 		}
@@ -81,7 +87,7 @@ func FormatViolations(violations []Violation) string {
 // ─────────────────────────────── expression parser ──────────────────────────
 
 // predicate is a function that returns true if a finding matches.
-type predicate func(model.Finding) bool
+type predicate func(model.Finding, Context) bool
 
 // parseExpression compiles an expression string into a predicate.
 // Supports: simple comparisons and " AND " combinator.
@@ -95,9 +101,9 @@ func parseExpression(expr string) (predicate, error) {
 		}
 		preds = append(preds, pred)
 	}
-	return func(f model.Finding) bool {
+	return func(f model.Finding, ctx Context) bool {
 		for _, p := range preds {
-			if !p(f) {
+			if !p(f, ctx) {
 				return false
 			}
 		}
@@ -193,7 +199,7 @@ func buildInPredicate(field string, values []string) (predicate, error) {
 	if err != nil {
 		return nil, err
 	}
-	return func(f model.Finding) bool {
+	return func(f model.Finding, ctx Context) bool {
 		v := strings.ToLower(getter(f))
 		return set[v]
 	}, nil
@@ -215,7 +221,8 @@ func buildCompPredicate(field, op, value string) (predicate, error) {
 			}
 			return f.CVSS
 		}
-		return func(f model.Finding) bool {
+		return func(f model.Finding, ctx Context) bool {
+			_ = ctx
 			v := numGetter(f)
 			switch op {
 			case "==":
@@ -239,7 +246,8 @@ func buildCompPredicate(field, op, value string) (predicate, error) {
 	if field == "severity" {
 		threshSev := model.Severity(valueLower)
 		threshRank := threshSev.Rank()
-		return func(f model.Finding) bool {
+		return func(f model.Finding, ctx Context) bool {
+			_ = ctx
 			switch op {
 			case "==":
 				return strings.ToLower(string(f.Severity)) == valueLower
@@ -258,17 +266,35 @@ func buildCompPredicate(field, op, value string) (predicate, error) {
 		}, nil
 	}
 
-	// Boolean field.
-	if field == "is_in_kev" || field == "fix_available" {
+	// Boolean fields.
+	if field == "is_in_kev" || field == "fix_available" || field == "suppressed" ||
+		field == "is_new" || field == "verified" || field == "is_reachable" {
 		wantTrue := valueLower == "true" || valueLower == "yes" || valueLower == "1"
-		getter := func(f model.Finding) bool {
-			if field == "is_in_kev" {
+		getter := func(f model.Finding, ctx Context) bool {
+			switch field {
+			case "is_in_kev":
 				return f.IsInKEV
+			case "fix_available":
+				return f.FixAvailable
+			case "suppressed":
+				if ctx.IsSuppressed == nil {
+					return false
+				}
+				return ctx.IsSuppressed(f)
+			case "is_new":
+				if ctx.IsNew == nil {
+					return false
+				}
+				return ctx.IsNew(f)
+			case "verified":
+				return strings.EqualFold(f.Metadata["verified"], "true")
+			case "is_reachable":
+				return f.IsReachable != nil && *f.IsReachable
 			}
-			return f.FixAvailable
+			return false
 		}
-		return func(f model.Finding) bool {
-			v := getter(f)
+		return func(f model.Finding, ctx Context) bool {
+			v := getter(f, ctx)
 			switch op {
 			case "==":
 				return v == wantTrue
@@ -284,7 +310,8 @@ func buildCompPredicate(field, op, value string) (predicate, error) {
 	if err != nil {
 		return nil, err
 	}
-	return func(f model.Finding) bool {
+	return func(f model.Finding, ctx Context) bool {
+		_ = ctx
 		v := strings.ToLower(getter(f))
 		switch op {
 		case "==":
@@ -302,7 +329,7 @@ func fieldGetter(field string) (func(model.Finding) string, error) {
 	case "category":
 		return func(f model.Finding) string { return string(f.Category) }, nil
 	case "priority":
-		return func(f model.Finding) string { return f.Priority }, nil
+		return func(f model.Finding) string { return f.EffectivePriority() }, nil
 	case "tool":
 		return func(f model.Finding) string { return f.Tool }, nil
 	case "rule_id":

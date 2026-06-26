@@ -56,19 +56,30 @@ func (o *OSVScanner) Run(ctx context.Context, target string) ([]byte, error) {
 	// osv-scanner exits 1 when vulnerabilities are found; treat that as normal.
 	// Only fail if we got no output at all and exit was non-zero (real failure).
 	runErr := cmd.Run()
+	stderrStr := strings.TrimSpace(stderr.String())
 	if stdout.Len() == 0 {
+		if isNoPackageSources(stderrStr, runErr) {
+			return []byte(`{"results":[]}`), nil
+		}
 		if runErr != nil {
-			return nil, fmt.Errorf("osv-scanner failed: %w (stderr: %s)", runErr, strings.TrimSpace(stderr.String()))
+			return nil, fmt.Errorf("osv-scanner failed: %w (stderr: %s)", runErr, stderrStr)
 		}
 		return []byte(`{"results":[]}`), nil
 	}
 	if !json.Valid(stdout.Bytes()) {
 		if runErr != nil {
-			return nil, fmt.Errorf("osv-scanner returned invalid JSON: %w (stderr: %s)", runErr, strings.TrimSpace(stderr.String()))
+			return nil, fmt.Errorf("osv-scanner returned invalid JSON: %w (stderr: %s)", runErr, stderrStr)
 		}
-		return nil, fmt.Errorf("osv-scanner returned invalid JSON (stderr: %s)", strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("osv-scanner returned invalid JSON (stderr: %s)", stderrStr)
 	}
 	return stdout.Bytes(), nil
+}
+
+func isNoPackageSources(stderr string, err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(stderr), "no package sources found")
 }
 
 func (o *OSVScanner) Normalize(raw []byte) ([]model.Finding, error) {

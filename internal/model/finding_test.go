@@ -135,3 +135,33 @@ func TestFinding_MeetsThreshold(t *testing.T) {
 		}
 	}
 }
+
+func TestComputePriority_ReachableKEV(t *testing.T) {
+	reachable := true
+	unreachable := false
+	f := Finding{IsInKEV: true, IsReachable: &reachable}
+	if got := f.ComputePriority(); got != "P0" {
+		t.Fatalf("reachable KEV = %q, want P0", got)
+	}
+	f.IsReachable = &unreachable
+	if got := f.ComputePriority(); got != "P1" {
+		t.Fatalf("unreachable KEV = %q, want P1", got)
+	}
+}
+
+func TestSortFindings_PriorityBeforeSeverity(t *testing.T) {
+	findings := []Finding{
+		{ID: "low-sev-high-priority", Severity: SeverityLow, Priority: "P0"},
+		{ID: "high-sev-low-priority", Severity: SeverityCritical, Priority: "P3"},
+	}
+	SortFindings(findings)
+	if findings[0].ID != "low-sev-high-priority" {
+		t.Fatalf("expected priority sort first, got %v", findings)
+	}
+}
+
+func TestPriorityRank(t *testing.T) {
+	if PriorityRank("P0") >= PriorityRank("P1") {
+		t.Fatal("P0 should rank higher than P1")
+	}
+}

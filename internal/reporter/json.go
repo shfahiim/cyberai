@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"sort"
 	"time"
 
 	"github.com/shfahiim/cyberai/internal/model"
@@ -42,12 +41,7 @@ type Report struct {
 // NewReport builds a Report from the orchestrator result + the filtered
 // findings + counts. It sorts findings by severity then file.
 func NewReport(target, hash string, findings []model.Finding, scanners []model.ScanResult, totalFindings, suppressed int, dur time.Duration) *Report {
-	sort.Slice(findings, func(i, j int) bool {
-		if findings[i].Severity.Rank() != findings[j].Severity.Rank() {
-			return findings[i].Severity.Rank() < findings[j].Severity.Rank()
-		}
-		return findings[i].File < findings[j].File
-	})
+	model.SortFindings(findings)
 	return &Report{
 		Target:             target,
 		Hash:               hash,

@@ -283,7 +283,12 @@ func runScan(cmd *cobra.Command, opts *scanOptions) error {
 	// 5. Run scanners via the orchestrator (Phase 1.5: Semgrep end-to-end;
 	// Phase 1.6 will add Gitleaks + Trivy).
 	//
-	scanners := buildScanners(cfg, profile, selection)
+	scanners := scanner.BuildAll(scanner.BuildOptions{
+		CategoryEnabled: cfg.IsScannerEnabled,
+		Profile:         profile,
+		SemgrepRulesets: selection.SemgrepRulesets,
+		TrivyScanners:   selection.TrivyScanners,
+	})
 	var scannerNames []string
 	for _, s := range scanners {
 		scannerNames = append(scannerNames, s.Name())
@@ -395,13 +400,34 @@ func runScan(cmd *cobra.Command, opts *scanOptions) error {
 		}
 	}
 
+	for i := range filtered {
+		if filtered[i].Priority == "" {
+			filtered[i].Priority = filtered[i].ComputePriority()
+		}
+	}
+
+	suppFile, suppErr := suppression.Load(profile.Root)
+
 	// 6c. Policy gate evaluation.
 	if len(cfg.Policies.Gates) > 0 {
 		gates := make([]policy.Gate, len(cfg.Policies.Gates))
 		for i, g := range cfg.Policies.Gates {
 			gates[i] = policy.Gate{Name: g.Name, FailOn: g.FailOn}
 		}
-		violations := policy.Evaluate(gates, filtered)
+		policyCtx := policy.Context{
+			IsNew: func(f model.Finding) bool {
+				if len(baselineIDs) == 0 {
+					return false
+				}
+				return !baselineIDs[f.ID]
+			},
+		}
+		if suppErr == nil && suppFile != nil {
+			policyCtx.IsSuppressed = func(f model.Finding) bool {
+				return suppFile.IsSuppressed(f)
+			}
+		}
+		violations := policy.Evaluate(gates, filtered, policyCtx)
 		if len(violations) > 0 {
 			fmt.Fprint(cmd.ErrOrStderr(), policy.FormatViolations(violations))
 			if opts.CI {
@@ -430,16 +456,15 @@ func runScan(cmd *cobra.Command, opts *scanOptions) error {
 
 	// Apply suppression file filtering (.cyberai-suppressions.yaml).
 	{
-		sf, sfErr := suppression.Load(profile.Root)
-		if sfErr != nil && opts.Verbose {
-			msg := fmt.Sprintf("suppressions: %v", sfErr)
+		if suppErr != nil && opts.Verbose {
+			msg := fmt.Sprintf("suppressions: %v", suppErr)
 			if uiR != nil {
 				msg = uiR.WarningStyle().Render(msg)
 			}
 			fmt.Fprintln(cmd.ErrOrStderr(), msg)
 		}
-		if sfErr == nil && len(sf.Suppressions) > 0 {
-			unsuppressed, suppCount, expiredCount := sf.FilterFindings(filtered)
+		if suppErr == nil && suppFile != nil && len(suppFile.Suppressions) > 0 {
+			unsuppressed, suppCount, expiredCount := suppFile.FilterFindings(filtered)
 			filtered = unsuppressed
 			if opts.Verbose {
 				key := func(s string) string {
@@ -578,107 +603,6 @@ func runScan(cmd *cobra.Command, opts *scanOptions) error {
 	return nil
 }
 
-// buildScanners returns the scanners enabled by the user's config + CLI +
-// the router's plan.
-//
-// Trivy is multi-category: it can run as SCA, IaC, or license scanning.
-// Secrets are handled by Gitleaks, so `--only secrets` does not implicitly
-// pull in Trivy. If no Trivy-relevant categories are enabled, we don't run it.
-func buildScanners(cfg *config.Config, profile *project.Profile, selection scannerSelection) []scanner.NormalizingScanner {
-	var out []scanner.NormalizingScanner
-
-	if cfg.IsScannerEnabled("sast") {
-		// Prefer the router's semgrep rulesets if any; otherwise infer.
-		rulesets := selection.SemgrepRulesets
-		if len(rulesets) == 0 {
-			rulesets = router.DefaultSemgrepRulesets(profile)
-		}
-		out = append(out, &scanner.Semgrep{
-			Configs: rulesets,
-		})
-	}
-
-	if cfg.IsScannerEnabled("secrets") {
-		out = append(out, &scanner.Gitleaks{})
-	}
-
-	if cfg.IsScannerEnabled("iac") && projectHasIaC(profile) {
-		out = append(out, &scanner.Checkov{})
-	}
-
-	if cfg.IsScannerEnabled("docker") && profile.HasDocker {
-		out = append(out, &scanner.Hadolint{})
-	}
-
-	if cfg.IsScannerEnabled("cicd") && profile.HasCI {
-		out = append(out, &scanner.Zizmor{})
-		out = append(out, &scanner.Actionlint{})
-	}
-
-	if cfg.IsScannerEnabled("sca") {
-		out = append(out, &scanner.Grype{})
-		out = append(out, &scanner.OSVScanner{})
-		if hasLanguage(profile, "go") {
-			out = append(out, &scanner.Govulncheck{})
-		}
-	}
-
-	// Trivy covers SCA, IaC, and license.
-	trivyScanners := []string{}
-	if cfg.IsScannerEnabled("sca") {
-		trivyScanners = append(trivyScanners, "vuln")
-	}
-	if cfg.IsScannerEnabled("iac") {
-		trivyScanners = append(trivyScanners, "misconfig")
-	}
-	if cfg.IsScannerEnabled("license") {
-		trivyScanners = append(trivyScanners, "license")
-	}
-	// Router may have specified additional trivy scanners; merge them in, but
-	// never widen beyond the categories the user/config explicitly enabled.
-	for _, s := range selection.TrivyScanners {
-		if !trivyScannerAllowed(cfg, s) {
-			continue
-		}
-		found := false
-		for _, e := range trivyScanners {
-			if e == s {
-				found = true
-				break
-			}
-		}
-		if !found {
-			trivyScanners = append(trivyScanners, s)
-		}
-	}
-	if len(trivyScanners) > 0 {
-		out = append(out, &scanner.Trivy{
-			Scanners: trivyScanners,
-		})
-	}
-
-	return out
-}
-
-func projectHasIaC(profile *project.Profile) bool {
-	if profile == nil {
-		return false
-	}
-	return profile.HasTerraform || profile.HasK8s || profile.HasAnsible || profile.HasDocker || profile.HasCI
-}
-
-func hasLanguage(profile *project.Profile, lang string) bool {
-	if profile == nil {
-		return false
-	}
-	for _, l := range profile.Languages {
-		if strings.EqualFold(l, lang) {
-			return true
-		}
-	}
-	return false
-}
-
 func resolveTarget(t string) (string, error) {
 	if t == "" {
 		cwd, err := os.Getwd()
@@ -745,19 +669,6 @@ func resolveFormats(opts *scanOptions, cfg *config.Config, saveReports bool) []s
 		}
 	}
 	return out
-}
-
-func trivyScannerAllowed(cfg *config.Config, scannerName string) bool {
-	switch scannerName {
-	case "vuln":
-		return cfg.IsScannerEnabled("sca")
-	case "misconfig":
-		return cfg.IsScannerEnabled("iac")
-	case "license":
-		return cfg.IsScannerEnabled("license")
-	default:
-		return false
-	}
 }
 
 func countFindingsBySeverity(findings []model.Finding) map[string]int {

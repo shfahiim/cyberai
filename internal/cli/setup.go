@@ -10,6 +10,7 @@ import (
 
 	"github.com/shfahiim/cyberai/internal/config"
 	"github.com/shfahiim/cyberai/internal/project"
+	"github.com/shfahiim/cyberai/internal/scanner"
 	"github.com/shfahiim/cyberai/internal/tools"
 	"github.com/shfahiim/cyberai/internal/ui"
 )
@@ -207,7 +208,7 @@ func recommendedTools(profile *project.Profile) []string {
 		}
 	}
 	add("semgrep", "gitleaks", "trivy", "grype", "osv-scanner", "syft")
-	if projectHasIaC(profile) {
+	if scanner.ProfileHasIaC(profile) {
 		add("checkov")
 	}
 	if profile.HasDocker {
@@ -216,7 +217,7 @@ func recommendedTools(profile *project.Profile) []string {
 	if profile.HasCI {
 		add("zizmor", "actionlint")
 	}
-	if hasLanguage(profile, "go") {
+	if scanner.HasLanguage(profile, "go") {
 		add("govulncheck")
 	}
 	// Stable order for readable output.

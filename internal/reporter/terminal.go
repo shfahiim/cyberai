@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -140,12 +139,7 @@ func (t *Terminal) Write(w io.Writer, r *Report) {
 
 	// Per-finding lines (sort by severity then file for stable output)
 	sorted := append([]model.Finding(nil), r.Findings...)
-	sort.Slice(sorted, func(i, j int) bool {
-		if sorted[i].Severity.Rank() != sorted[j].Severity.Rank() {
-			return sorted[i].Severity.Rank() < sorted[j].Severity.Rank()
-		}
-		return sorted[i].File < sorted[j].File
-	})
+	model.SortFindings(sorted)
 
 	max := t.MaxFindings
 	if max == 0 {

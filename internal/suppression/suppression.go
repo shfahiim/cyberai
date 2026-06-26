@@ -174,6 +174,18 @@ func (f *File) Remove(id string) error {
 //   - suppressed:   count of findings silenced by an active suppression
 //   - expired:      count of findings that would have been silenced but the
 //     suppression is past its expiry date
+
+// IsSuppressed reports whether any active suppression covers the finding.
+func (f *File) IsSuppressed(finding model.Finding) bool {
+	for i := range f.Suppressions {
+		if f.Suppressions[i].Matches(&finding) {
+			return true
+		}
+	}
+	return false
+}
+
+// FilterFindings returns findings that are not covered by active suppressions.
 func (f *File) FilterFindings(findings []model.Finding) (unsuppressed []model.Finding, suppressed int, expired int) {
 	for _, finding := range findings {
 		activeMatch := false
