@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/shfahiim/cyberai/internal/project"
 )
@@ -121,6 +122,28 @@ func TestCache_Miss(t *testing.T) {
 	}
 	if got != nil {
 		t.Errorf("expected nil on miss, got %+v", got)
+	}
+}
+
+func TestCache_TTLExpiry(t *testing.T) {
+	dir := t.TempDir()
+	c := &Cache{Dir: dir, TTL: time.Millisecond}
+	plan := &ScanPlan{
+		Scanners:          []string{"sast"},
+		SeverityThreshold: "low",
+		ProjectHash:       "sha256:ttl-test",
+		Source:            "default",
+	}
+	if err := c.Put("sha256:ttl-test", plan); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	got, err := c.Get("sha256:ttl-test")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected cache miss after TTL, got %+v", got)
 	}
 }
 

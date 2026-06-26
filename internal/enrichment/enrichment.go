@@ -91,6 +91,16 @@ func (c *Client) Enrich(findings []model.Finding) []model.Finding {
 	return out
 }
 
+// TagCompliance sets ComplianceTags from CWE mappings without network calls.
+func TagCompliance(findings []model.Finding) []model.Finding {
+	for i := range findings {
+		if len(findings[i].ComplianceTags) == 0 {
+			findings[i].ComplianceTags = buildComplianceTags(&findings[i])
+		}
+	}
+	return findings
+}
+
 // ─────────────────────────────────────── EPSS ───────────────────────────────
 
 type epssEntry struct {

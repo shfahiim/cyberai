@@ -34,23 +34,44 @@ type Report struct {
 	TotalFindings int `json:"total_findings"`
 	// SuppressedByIgnore is the number of findings dropped by ignore patterns.
 	SuppressedByIgnore int `json:"suppressed_by_ignore"`
+	// SuppressedBySuppression is the number of findings silenced by .cyberai-suppressions.yaml.
+	SuppressedBySuppression int `json:"suppressed_by_suppression,omitempty"`
+	// SuppressionAudit lists findings removed by suppressions and why.
+	SuppressionAudit []SuppressionAuditEntry `json:"suppression_audit,omitempty"`
 	// Duration is the total scan time.
 	Duration time.Duration `json:"duration"`
+}
+
+// SuppressionAuditEntry records one suppressed finding for report audit trails.
+type SuppressionAuditEntry struct {
+	FindingID     string    `json:"finding_id"`
+	SuppressionID string    `json:"suppression_id"`
+	Reason        string    `json:"reason"`
+	Author        string    `json:"author,omitempty"`
+	Ticket        string    `json:"ticket,omitempty"`
+	ExpiresAt     time.Time `json:"expires_at,omitempty"`
 }
 
 // NewReport builds a Report from the orchestrator result + the filtered
 // findings + counts. It sorts findings by severity then file.
 func NewReport(target, hash string, findings []model.Finding, scanners []model.ScanResult, totalFindings, suppressed int, dur time.Duration) *Report {
+	return NewReportWithAudit(target, hash, findings, scanners, totalFindings, suppressed, 0, nil, dur)
+}
+
+// NewReportWithAudit builds a Report including suppression audit metadata.
+func NewReportWithAudit(target, hash string, findings []model.Finding, scanners []model.ScanResult, totalFindings, suppressedByIgnore, suppressedBySuppression int, audit []SuppressionAuditEntry, dur time.Duration) *Report {
 	model.SortFindings(findings)
 	return &Report{
-		Target:             target,
-		Hash:               hash,
-		GeneratedAt:        time.Now().UTC(),
-		Findings:           findings,
-		Scanners:           scanners,
-		TotalFindings:      totalFindings,
-		SuppressedByIgnore: suppressed,
-		Duration:           dur,
+		Target:                  target,
+		Hash:                    hash,
+		GeneratedAt:             time.Now().UTC(),
+		Findings:                findings,
+		Scanners:                scanners,
+		TotalFindings:           totalFindings,
+		SuppressedByIgnore:      suppressedByIgnore,
+		SuppressedBySuppression: suppressedBySuppression,
+		SuppressionAudit:        audit,
+		Duration:                dur,
 	}
 }
 

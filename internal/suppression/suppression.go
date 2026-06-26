@@ -185,17 +185,44 @@ func (f *File) IsSuppressed(finding model.Finding) bool {
 	return false
 }
 
+// AuditEntry records why a finding was suppressed for report audit trails.
+type AuditEntry struct {
+	FindingID     string    `json:"finding_id"`
+	SuppressionID string    `json:"suppression_id"`
+	Reason        string    `json:"reason"`
+	Author        string    `json:"author,omitempty"`
+	Ticket        string    `json:"ticket,omitempty"`
+	ExpiresAt     time.Time `json:"expires_at,omitempty"`
+}
+
+// MatchSuppression returns the active suppression covering a finding, if any.
+func (f *File) MatchSuppression(finding model.Finding) *Suppression {
+	for i := range f.Suppressions {
+		s := &f.Suppressions[i]
+		if !s.IsExpired() && s.Matches(&finding) {
+			return s
+		}
+	}
+	return nil
+}
+
 // FilterFindings returns findings that are not covered by active suppressions.
 func (f *File) FilterFindings(findings []model.Finding) (unsuppressed []model.Finding, suppressed int, expired int) {
+	active, audit, suppressed, expired := f.ApplySuppressions(findings)
+	_ = audit
+	return active, suppressed, expired
+}
+
+// ApplySuppressions removes actively suppressed findings and returns audit metadata.
+func (f *File) ApplySuppressions(findings []model.Finding) (active []model.Finding, audit []AuditEntry, suppressed int, expired int) {
 	for _, finding := range findings {
 		activeMatch := false
 		expiredMatch := false
+		var matched *Suppression
 
 		for i := range f.Suppressions {
 			s := &f.Suppressions[i]
-			// Check for an expired suppression that *would* match.
 			if s.IsExpired() {
-				// Temporarily pretend it hasn't expired to test the rule part.
 				if matchIgnoringExpiry(s, &finding) {
 					expiredMatch = true
 				}
@@ -203,20 +230,29 @@ func (f *File) FilterFindings(findings []model.Finding) (unsuppressed []model.Fi
 			}
 			if s.Matches(&finding) {
 				activeMatch = true
+				matched = s
 				break
 			}
 		}
 
-		if activeMatch {
+		if activeMatch && matched != nil {
 			suppressed++
+			audit = append(audit, AuditEntry{
+				FindingID:     finding.ID,
+				SuppressionID: matched.ID,
+				Reason:        matched.Reason,
+				Author:        matched.Author,
+				Ticket:        matched.Ticket,
+				ExpiresAt:     matched.ExpiresAt,
+			})
 		} else {
 			if expiredMatch {
 				expired++
 			}
-			unsuppressed = append(unsuppressed, finding)
+			active = append(active, finding)
 		}
 	}
-	return unsuppressed, suppressed, expired
+	return active, audit, suppressed, expired
 }
 
 // matchIgnoringExpiry checks if a suppression matches a finding without

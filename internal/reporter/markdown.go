@@ -28,6 +28,16 @@ func Markdown(r *Report) string {
 	if r.SuppressedByIgnore > 0 {
 		fmt.Fprintf(&b, "**Suppressed by ignore patterns:** %d\n\n", r.SuppressedByIgnore)
 	}
+	if r.SuppressedBySuppression > 0 {
+		fmt.Fprintf(&b, "**Suppressed by .cyberai-suppressions.yaml:** %d\n\n", r.SuppressedBySuppression)
+	}
+	if len(r.SuppressionAudit) > 0 {
+		fmt.Fprintf(&b, "## Suppression audit\n\n")
+		for _, entry := range r.SuppressionAudit {
+			fmt.Fprintf(&b, "- `%s` via `%s`: %s\n", entry.FindingID, entry.SuppressionID, entry.Reason)
+		}
+		fmt.Fprintf(&b, "\n")
+	}
 
 	// Summary line
 	if len(r.Findings) == 0 {

@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/shfahiim/cyberai/internal/baseline"
+	"github.com/shfahiim/cyberai/internal/compliance"
 	"github.com/shfahiim/cyberai/internal/config"
 	"github.com/shfahiim/cyberai/internal/enrichment"
 	"github.com/shfahiim/cyberai/internal/gitdiff"
@@ -23,6 +24,7 @@ import (
 	"github.com/shfahiim/cyberai/internal/scanner"
 	"github.com/shfahiim/cyberai/internal/summarizer"
 	"github.com/shfahiim/cyberai/internal/suppression"
+	"github.com/shfahiim/cyberai/internal/triage"
 	"github.com/shfahiim/cyberai/internal/ui"
 )
 
@@ -65,6 +67,7 @@ type scanOptions struct {
 	Enrich            bool
 	Diff              string
 	SuppressHints     bool
+	Compliance        []string
 }
 
 func newScanCmd() *cobra.Command {
@@ -124,6 +127,7 @@ func newScanCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.Enrich, "enrich", false, "fetch EPSS and CISA KEV data; add priority labels")
 	cmd.Flags().StringVar(&opts.Diff, "diff", "", "only report findings in files changed vs git ref (e.g. main, HEAD~1)")
 	cmd.Flags().BoolVar(&opts.SuppressHints, "suppress-hints", true, "show cyberai suppress … hints under terminal findings")
+	cmd.Flags().StringSliceVar(&opts.Compliance, "compliance", nil, "filter findings by compliance framework (e.g. owasp-top-10,pci-dss)")
 
 	return cmd
 }
@@ -351,11 +355,13 @@ func runScan(cmd *cobra.Command, opts *scanOptions) error {
 	var skippedByIgnore int
 	var baselineSuppressed int
 	baselineIDs := map[string]bool{}
+	var baselineReport *baseline.Report
 	if cfg.BaselinePath != "" {
 		base, err := baseline.Load(cfg.BaselinePath)
 		if err != nil {
 			return fmt.Errorf("load baseline: %w", err)
 		}
+		baselineReport = base
 		for _, f := range base.Findings {
 			baselineIDs[f.ID] = true
 		}
@@ -406,7 +412,25 @@ func runScan(cmd *cobra.Command, opts *scanOptions) error {
 		}
 	}
 
+	firstSeenFrom := map[string]time.Time{}
+	if baselineReport != nil {
+		firstSeenFrom = triage.FirstSeenMap(baselineReport.Findings, baselineReport.GeneratedAt)
+	}
+	triage.ApplyMetadata(filtered, firstSeenFrom, cfg.Policies.SLA, time.Now().UTC())
+
+	if len(opts.Compliance) > 0 {
+		filtered = enrichment.TagCompliance(filtered)
+		before := len(filtered)
+		filtered = compliance.FilterFindings(filtered, opts.Compliance)
+		if opts.Verbose {
+			fmt.Fprintf(cmd.OutOrStdout(), "compliance: %d → %d findings (filters=%v)\n",
+				before, len(filtered), compliance.ParseFilters(opts.Compliance))
+		}
+	}
+
 	suppFile, suppErr := suppression.Load(profile.Root)
+	var suppressionAudit []reporter.SuppressionAuditEntry
+	var suppressedBySuppression int
 
 	// 6c. Policy gate evaluation.
 	if len(cfg.Policies.Gates) > 0 {
@@ -464,8 +488,20 @@ func runScan(cmd *cobra.Command, opts *scanOptions) error {
 			fmt.Fprintln(cmd.ErrOrStderr(), msg)
 		}
 		if suppErr == nil && suppFile != nil && len(suppFile.Suppressions) > 0 {
-			unsuppressed, suppCount, expiredCount := suppFile.FilterFindings(filtered)
-			filtered = unsuppressed
+			var expiredCount int
+			var suppAudit []suppression.AuditEntry
+			filtered, suppAudit, suppressedBySuppression, expiredCount = suppFile.ApplySuppressions(filtered)
+			suppressionAudit = make([]reporter.SuppressionAuditEntry, len(suppAudit))
+			for i, entry := range suppAudit {
+				suppressionAudit[i] = reporter.SuppressionAuditEntry{
+					FindingID:     entry.FindingID,
+					SuppressionID: entry.SuppressionID,
+					Reason:        entry.Reason,
+					Author:        entry.Author,
+					Ticket:        entry.Ticket,
+					ExpiresAt:     entry.ExpiresAt,
+				}
+			}
 			if opts.Verbose {
 				key := func(s string) string {
 					if uiR != nil {
@@ -474,7 +510,7 @@ func runScan(cmd *cobra.Command, opts *scanOptions) error {
 					return s
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "%s %d suppressed by .cyberai-suppressions.yaml (%d via expired rules)\n",
-					key("suppressions:"), suppCount, expiredCount)
+					key("suppressions:"), suppressedBySuppression, expiredCount)
 			}
 		}
 	}
@@ -504,10 +540,11 @@ func runScan(cmd *cobra.Command, opts *scanOptions) error {
 	outputDir := ""
 	formatPaths := map[string]string{}
 
-	rep := reporter.NewReport(
+	rep := reporter.NewReportWithAudit(
 		profile.Root, profile.Hash(),
 		filtered, result.Results,
 		len(result.Aggregate()), skippedByIgnore,
+		suppressedBySuppression, suppressionAudit,
 		result.Duration,
 	)
 
