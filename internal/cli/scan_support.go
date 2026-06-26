@@ -64,7 +64,18 @@ func ensureScannersAvailable(cmd *cobra.Command, scanners []scanner.NormalizingS
 	}
 	if !installMissing {
 		if !ci {
-			printBootstrapMessage(cmd, "warning", fmt.Sprintf("skipping missing scanners: %s (run with --install-missing to install)", strings.Join(missing, ", ")))
+			auto, manual := partitionMissingTools(missing)
+			if len(auto) > 0 {
+				printBootstrapMessage(cmd, "warning", fmt.Sprintf(
+					"skipping missing scanners: %s (run: cyberai tools install %s)",
+					strings.Join(auto, ", "), strings.Join(auto, " ")))
+			}
+			if len(manual) > 0 {
+				for _, name := range manual {
+					printBootstrapMessage(cmd, "warning", fmt.Sprintf(
+						"skipping missing scanner: %s (%s)", name, tools.InstallHint(name)))
+				}
+			}
 		}
 		return nil, nil
 	}
@@ -342,15 +353,30 @@ func printSkippedScannerSummary(cmd *cobra.Command, results []model.ScanResult) 
 	if len(skipped) == 0 && len(errored) == 0 {
 		return
 	}
-	uiR := uiFrom(cmd)
 	if len(skipped) > 0 {
+		auto, manual := partitionMissingTools(skipped)
 		msg := fmt.Sprintf("skipped %d scanner(s) not installed: %s", len(skipped), strings.Join(skipped, ", "))
 		printBootstrapMessage(cmd, "warning", msg)
-		printBootstrapMessage(cmd, "info", "fix: cyberai tools install "+strings.Join(skipped, " "))
-		printBootstrapMessage(cmd, "info", "or:  cyberai scan --install-missing")
-		_ = uiR
+		if len(auto) > 0 {
+			printBootstrapMessage(cmd, "info", "fix: cyberai tools install "+strings.Join(auto, " "))
+			printBootstrapMessage(cmd, "info", "or:  cyberai scan --install-missing")
+		}
+		for _, name := range manual {
+			printBootstrapMessage(cmd, "info", fmt.Sprintf("manual: %s (%s)", name, tools.InstallHint(name)))
+		}
 	}
 	for _, e := range errored {
 		printBootstrapMessage(cmd, "warning", "scanner error: "+e)
 	}
+}
+
+func partitionMissingTools(names []string) (auto, manual []string) {
+	for _, name := range names {
+		if tools.IsManagedInstall(name) {
+			auto = append(auto, name)
+		} else {
+			manual = append(manual, name)
+		}
+	}
+	return auto, manual
 }

@@ -1,0 +1,25 @@
+# Fresh Linux environment for cyberai packaging smoke tests.
+# Builds cyberai from the copied repo, runs tools install into an empty
+# ~/.cyberai, and verifies all managed scanners.
+FROM golang:1.25-bookworm
+
+ENV GOTOOLCHAIN=auto
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-venv \
+    python3-pip \
+    pipx \
+    git \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && pipx ensurepath
+
+ENV PATH="/root/.local/bin:${PATH}"
+
+WORKDIR /src
+COPY . .
+
+RUN chmod +x scripts/test-isolated-packaging.sh
+
+CMD ["./scripts/test-isolated-packaging.sh"]

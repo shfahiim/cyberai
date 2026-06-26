@@ -1,6 +1,10 @@
 # CyberAI
 
-CyberAI is a local CLI security and code-analysis tool. It runs deterministic scanners over a project, normalizes the results, and writes SARIF, JSON, Markdown, HTML, and terminal reports.
+<p align="center">
+  <img src="docs/assets/cyberai-logo.png" alt="CyberAI — local security scanning, triage, and reports" width="640">
+</p>
+
+CyberAI is a local CLI security and code-analysis tool. It runs deterministic scanners over a project, normalizes the results, and can write SARIF, JSON, Markdown, HTML, JUnit, CSV, and terminal reports.
 
 The scanner is read-only with respect to the target project. It does not modify source files, lockfiles, configs, or git state.
 
@@ -13,7 +17,7 @@ The scanner is read-only with respect to the target project. It does not modify 
 # First-time project setup (tools + config)
 cyberai setup
 
-# Quick local scan (terminal output, no LLM, no report files)
+# Quick local scan (terminal output only; no LLM; no report files)
 cyberai scan
 
 # Save SARIF/JSON/HTML reports
@@ -82,16 +86,25 @@ CyberAI currently shells out to:
 - **Checkov** for deeper IaC and policy checks.
 - **Hadolint** for Dockerfile linting.
 - **Zizmor** for GitHub Actions security checks.
+- **Grype**, **OSV-Scanner**, and **govulncheck** for dependency CVE coverage.
+- **Actionlint** for GitHub Actions correctness.
+- **Syft** for SBOM generation via `cyberai sbom`.
 
-Scans skip missing scanners by default. Install scanners explicitly when you want the full toolchain:
+All of the above except Semgrep (pipx/system) are installed by `cyberai tools install`. Scans skip missing scanners by default. Install the full toolchain when you want every category available:
 
 ```bash
 cyberai tools list
-cyberai tools install
-cyberai tools install gitleaks trivy
-cyberai tools install checkov hadolint zizmor
+cyberai tools install              # all managed scanners
+cyberai tools install gitleaks trivy syft actionlint
 cyberai tools update
 cyberai tools remove gitleaks
+```
+
+Or install the binary and scanners in one step from the repo:
+
+```bash
+./setup.sh --install-tools
+./setup.sh --prefix "$HOME/.local/bin" --install-tools
 ```
 
 Managed binaries live in `~/.cyberai/bin`, and CyberAI prepends that directory to `PATH` at startup. Python-based managed tools use CyberAI-owned virtualenvs under `~/.cyberai/venvs`. Tool state lives in `~/.cyberai/state/tools.json`.
@@ -100,13 +113,15 @@ Managed binaries live in `~/.cyberai/bin`, and CyberAI prepends that directory t
 
 ## Scan Output
 
-The normal CLI summary is human-readable:
+By default, `cyberai scan` prints a **terminal summary only**. It does not write report files unless you ask:
 
 ```bash
-cyberai scan
+cyberai scan --save              # write default formats to ./cyberai-reports
+cyberai scan -o /tmp/reports     # write to a custom directory
+cyberai scan --format sarif -o . # write specific formats only
 ```
 
-Use JSON when another program needs to consume the CLI summary:
+Use JSON when another program needs to consume the end-of-run CLI summary:
 
 ```bash
 cyberai scan --summary json
@@ -118,31 +133,94 @@ Suppress the final summary block:
 cyberai scan --summary off
 ```
 
-Reports land in `./cyberai-reports/` by default. Override with `--output`:
-
-```bash
-cyberai scan --output /tmp/cyberai-report
-```
-
 Config-file output paths are confined under the scanned project root. A CLI-provided `--output` path is treated as explicit user intent and may point elsewhere.
 
-## Common Commands
+### Scan presets
+
+Presets bundle common flag combinations:
+
+| Preset | Behavior |
+|---|---|
+| `quick` | Default: terminal output, LLM off |
+| `full` | All report formats, EPSS/KEV enrichment, smart LLM routing |
+| `ci` | SARIF + JUnit + JSON, enrichment, non-zero exit on findings |
+| `pr` | Changed files only (`--diff origin/HEAD`), medium+ severity |
 
 ```bash
-cyberai scan [path]               # run scanners and emit reports
-cyberai scan --only secrets       # only run Gitleaks
-cyberai scan --only sast,sca      # only run selected categories
+cyberai scan --preset full
+cyberai scan --preset ci -o reports/
+cyberai scan --preset pr
+```
+
+### Scanner categories (`--only`)
+
+Internal names: `sast`, `secrets`, `sca`, `iac`, `license`, `docker`, `cicd`
+
+Aliases also work: `code`, `dependencies`, `infrastructure`, `containers`, `pipelines`
+
+```bash
+cyberai scan --only secrets
+cyberai scan --only sast,sca
+cyberai scan --only dependencies
 cyberai scan --only iac,docker,cicd
-cyberai scan --install-missing    # install missing scanners before scanning
-cyberai tools list                # show scanner status
-cyberai tools install [tool...]   # install scanners
-cyberai tools update [tool...]    # refresh scanners
-cyberai tools remove [tool...]    # remove managed scanner binaries
-cyberai init                      # generate starter .cyberai.yaml
-cyberai report compare            # diff two saved JSON reports
+```
+
+Missing scanners are skipped with a summary at the end of the scan. Install them with `cyberai setup`, `cyberai tools install`, or `cyberai scan --install-missing`.
+
+## Commands
+
+```bash
+# Onboarding and health
+cyberai setup [path]            # install tools, write .cyberai.yaml, optional --llm
+cyberai doctor [path]           # check tools, config, git, LLM key
+cyberai init [path]             # write starter .cyberai.yaml only
+cyberai config show [path]      # print effective config (--format yaml|json)
+
+# Scanning
+cyberai scan [path]             # quick scan (terminal only)
+cyberai scan --save             # write report files
+cyberai scan --smart            # enable LLM router + HTML summary
+cyberai scan --no-llm           # disable LLM explicitly
+cyberai scan --preset ci -o out/
+cyberai scan --diff main        # findings in changed files only
+cyberai scan --enrich           # EPSS + CISA KEV priority labels
+cyberai scan --install-missing  # install missing managed scanners before scan
+
+# Suppressions
+cyberai suppress F-abc123 --reason "false positive"
+cyberai suppress add --rule-id RULE --reason "mitigated" --expires 90d
+cyberai suppress list
+cyberai suppress remove S-abc123
+
+# Tools
+cyberai tools list
+cyberai tools install [tool...]
+cyberai tools update [tool...]
+cyberai tools remove [tool...]
+
+# Reports and SBOM
+cyberai report compare --baseline old/report.json --current new/report.json
+cyberai sbom [path]             # requires syft (cyberai tools install syft)
+cyberai sbom --format spdx
+cyberai sbom --image myapp:latest
+cyberai sbom --enrich           # attach Grype vulnerability data
 ```
 
 Run `cyberai <command> --help` for full command-specific flags.
+
+## Common Commands
+
+Legacy quick reference (see **Commands** above for the full list):
+
+```bash
+cyberai setup && cyberai scan
+cyberai scan --save
+cyberai scan --preset ci -o reports/
+cyberai doctor
+cyberai tools list
+cyberai init
+cyberai report compare --baseline a.json --current b.json
+```
 
 ## Report Formats
 
@@ -152,41 +230,48 @@ Run `cyberai <command> --help` for full command-specific flags.
 | JSON | Full normalized machine-readable report |
 | Markdown | PR or issue comments |
 | HTML | Self-contained report with an optional executive summary |
-| terminal | Pretty stdout report, skipped in `--ci` |
+| JUnit | CI test result dashboards |
+| CSV | Spreadsheet and data workflows |
+| terminal | Pretty stdout report (default); skipped in `--ci` |
 
 ## Optional LLM Router
 
-If a Gemini API key is not detected in your shell environment, CyberAI will prompt you interactively on scan startup to enter one. 
+LLM routing is **off by default**. Enable it per run with `--smart`, or during project setup with `cyberai setup --llm`.
 
-Once provided, **CyberAI persists your API key and preferred model choice in a global configuration file** (`~/.cyberai/config.json`) so that you do not have to enter them again on future runs. 
+If a Gemini API key is not detected, CyberAI prompts interactively when LLM is enabled. Once provided, CyberAI persists your API key and preferred model in `~/.cyberai/config.json`.
 
-CyberAI uses Gemini for two main tasks:
+CyberAI uses Gemini for two tasks when enabled:
 1. **Router**: chooses which scanners and rulesets to run based on the detected project profile.
 2. **Summarizer**: writes the security executive summary for the HTML report.
 
-You can switch your preferred Gemini model choice at any time using the `--pick-model` flag:
 ```bash
-cyberai scan --pick-model
-```
-
-Disable all LLM behavior with:
-```bash
-cyberai scan --no-llm
-```
-
-CI mode also automatically disables LLM behavior:
-```bash
-cyberai scan --ci
+cyberai scan --smart
+cyberai scan --smart --pick-model
+cyberai scan --no-llm              # disable explicitly
+cyberai scan --preset ci           # CI disables LLM automatically
 ```
 
 The scanners remain the source of findings. The LLM only routes and summarizes.
 
 ## Configuration
 
-Generate a starter config:
+For a full first-time setup (tools + config), use:
+
+```bash
+cyberai setup
+```
+
+To write only a starter config file:
 
 ```bash
 cyberai init
+```
+
+Inspect effective settings for a project:
+
+```bash
+cyberai config show
+cyberai config show --format json
 ```
 
 CyberAI reads `.cyberai.yaml` or `.cyberai.yml` from the project root. CLI flags override the config file.
@@ -201,6 +286,7 @@ scanners:
 
 severity_threshold: low
 
+# Used when you run: cyberai scan --save
 output:
   path: cyberai-reports
   formats:
@@ -210,10 +296,18 @@ output:
     - html
     - terminal
 
+# Enable smart routing: cyberai scan --smart
+llm:
+  enabled: false
+  provider: gemini
+  model: gemini-3.5-flash
+
 ui:
   color: auto
   progress: auto
 ```
+
+Suppress known false positives in `.cyberai-suppressions.yaml` (see `cyberai suppress --help`).
 
 ## Development
 
@@ -221,6 +315,13 @@ ui:
 go test ./...
 go build ./...
 go run ./cmd/cyberai --help
+```
+
+End-to-end packaging smoke test (fresh `HOME`, `cyberai tools install`, benchmark scan):
+
+```bash
+./scripts/test-isolated-packaging.sh
+./scripts/docker-packaging-test.sh   # same test inside Docker (recommended)
 ```
 
 ## Benchmarks
@@ -250,26 +351,30 @@ Project layout:
 ```text
 cmd/cyberai/main.go          # entrypoint
 internal/
-  cli/         cobra commands and terminal UX
+  cli/         cobra commands (setup, doctor, scan, suppress, sbom, …)
   config/      .cyberai.yaml loader
+  enrichment/  EPSS + CISA KEV priority enrichment
   model/       unified Finding schema
+  policy/      CI policy gate expressions
   project/     deterministic project detection
   router/      LLM router and default plan
-  scanner/     Semgrep, Gitleaks, Trivy wrappers
+  scanner/     Semgrep, Gitleaks, Trivy, Checkov, … wrappers
   normalizer/  tool-specific output to Finding
-  reporter/    SARIF, JSON, Markdown, HTML, Terminal
+  reporter/    SARIF, JSON, Markdown, HTML, JUnit, CSV, Terminal
   summarizer/  LLM executive summary
+  suppression/ .cyberai-suppressions.yaml handling
   baseline/    baseline diff
   tools/       scanner probe and installer
 ```
 
 ## Roadmap
 
-The next useful direction is a real triage layer: route discovery, dependency reachability, exploitability scoring, and `cyberai investigate` to confirm or suppress scanner findings with evidence.
+Recent additions include enterprise triage (EPSS/KEV enrichment, suppressions, policy gates), expanded scanners, and a simplified CLI flow (`setup`, `doctor`, scan presets).
+
+Next useful direction: reachability-aware prioritization in reports, `--compliance` filtering, and `cyberai investigate` for evidence-based triage.
 
 Useful future tools to integrate:
 
-- `govulncheck` for Go vulnerability reachability.
-- `osv-scanner` or `grype` for dependency coverage.
+- Ecosystem-native audit tools such as `pip-audit`, `npm audit`, and `cargo-audit`.
 - `kics` or other IaC scanners.
-- Ecosystem-native audit tools such as `pip-audit` and `npm audit`.
+- Webhook outputs (Slack, Jira, DefectDojo).

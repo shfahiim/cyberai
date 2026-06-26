@@ -114,6 +114,87 @@ func (p Platform) HadolintAsset(ver string) (filename, url string, ok bool) {
 	return filename, url, true
 }
 
+// GrypeAsset returns the tarball/zip filename and URL for a grype release.
+//
+// Asset pattern: grype_{ver}_{os}_{arch}.{ext}
+// Examples: grype_0.83.0_linux_amd64.tar.gz, grype_0.83.0_windows_amd64.zip
+func (p Platform) GrypeAsset(ver string) (filename, url string, ok bool) {
+	osPart, ok := map[string]string{
+		"linux":   "linux",
+		"darwin":  "darwin",
+		"windows": "windows",
+	}[p.OS]
+	if !ok {
+		return "", "", false
+	}
+	archPart, ok := map[string]string{
+		"amd64": "amd64",
+		"arm64": "arm64",
+	}[p.Arch]
+	if !ok {
+		return "", "", false
+	}
+	ver = stripV(ver)
+	filename = "grype_" + ver + "_" + osPart + "_" + archPart + "." + p.Ext
+	url = "https://github.com/anchore/grype/releases/download/v" + ver + "/" + filename
+	return filename, url, true
+}
+
+// SyftAsset returns the tarball/zip filename and URL for a syft release.
+//
+// Asset pattern: syft_{ver}_{os}_{arch}.{ext}
+// Examples: syft_1.45.1_linux_amd64.tar.gz, syft_1.45.1_windows_amd64.zip
+func (p Platform) SyftAsset(ver string) (filename, url string, ok bool) {
+	osPart, ok := map[string]string{
+		"linux":   "linux",
+		"darwin":  "darwin",
+		"windows": "windows",
+	}[p.OS]
+	if !ok {
+		return "", "", false
+	}
+	archPart, ok := map[string]string{
+		"amd64": "amd64",
+		"arm64": "arm64",
+	}[p.Arch]
+	if !ok {
+		return "", "", false
+	}
+	ver = stripV(ver)
+	filename = "syft_" + ver + "_" + osPart + "_" + archPart + "." + p.Ext
+	url = "https://github.com/anchore/syft/releases/download/v" + ver + "/" + filename
+	return filename, url, true
+}
+
+// OSVScannerAsset returns the direct binary download URL for osv-scanner.
+//
+// Asset pattern: osv-scanner_{os}_{arch}[.exe]
+// Examples: osv-scanner_linux_amd64, osv-scanner_windows_amd64.exe
+func (p Platform) OSVScannerAsset(ver string) (filename, url string, ok bool) {
+	osPart, ok := map[string]string{
+		"linux":   "linux",
+		"darwin":  "darwin",
+		"windows": "windows",
+	}[p.OS]
+	if !ok {
+		return "", "", false
+	}
+	archPart, ok := map[string]string{
+		"amd64": "amd64",
+		"arm64": "arm64",
+	}[p.Arch]
+	if !ok {
+		return "", "", false
+	}
+	filename = "osv-scanner_" + osPart + "_" + archPart
+	if p.OS == "windows" {
+		filename += ".exe"
+	}
+	ver = stripV(ver)
+	url = "https://github.com/google/osv-scanner/releases/download/v" + ver + "/" + filename
+	return filename, url, true
+}
+
 // stripV removes a leading "v" from a version tag (e.g. "v8.30.1" → "8.30.1").
 func stripV(s string) string {
 	if len(s) > 0 && s[0] == 'v' {

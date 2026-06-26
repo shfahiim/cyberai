@@ -43,6 +43,17 @@ func TestIsSemverish(t *testing.T) {
 	}
 }
 
+func TestIsManagedInstall(t *testing.T) {
+	for _, name := range []string{"grype", "osv-scanner", "govulncheck", "trivy", "actionlint", "syft"} {
+		if !IsManagedInstall(name) {
+			t.Errorf("expected %q to be managed", name)
+		}
+	}
+	if IsManagedInstall("unknown-tool") {
+		t.Error("unknown-tool should not be managed")
+	}
+}
+
 func TestAll_HasExpectedTools(t *testing.T) {
 	got := map[string]bool{}
 	for _, tool := range All() {

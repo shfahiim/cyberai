@@ -206,7 +206,7 @@ func recommendedTools(profile *project.Profile) []string {
 			}
 		}
 	}
-	add("semgrep", "gitleaks", "trivy")
+	add("semgrep", "gitleaks", "trivy", "grype", "osv-scanner", "syft")
 	if projectHasIaC(profile) {
 		add("checkov")
 	}
@@ -214,14 +214,13 @@ func recommendedTools(profile *project.Profile) []string {
 		add("hadolint")
 	}
 	if profile.HasCI {
-		add("zizmor")
+		add("zizmor", "actionlint")
 	}
-	out := make([]string, 0, len(seen))
-	for name := range seen {
-		out = append(out, name)
+	if hasLanguage(profile, "go") {
+		add("govulncheck")
 	}
 	// Stable order for readable output.
-	order := []string{"semgrep", "gitleaks", "trivy", "checkov", "hadolint", "zizmor"}
+	order := []string{"semgrep", "gitleaks", "trivy", "grype", "osv-scanner", "govulncheck", "checkov", "hadolint", "zizmor", "actionlint", "syft"}
 	sorted := []string{}
 	for _, name := range order {
 		if seen[name] {

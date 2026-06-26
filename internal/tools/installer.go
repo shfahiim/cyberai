@@ -133,12 +133,7 @@ func (m *Manager) List() ([]ListResult, error) {
 
 // IsInstallable returns true if the tool supports automated installation.
 func (m *Manager) IsInstallable(name string) bool {
-	switch name {
-	case "semgrep", "gitleaks", "trivy", "checkov", "hadolint", "zizmor":
-		return true
-	default:
-		return false
-	}
+	return IsManagedInstall(name)
 }
 
 // Install fetches and installs the named tool. Empty name installs all
@@ -169,6 +164,16 @@ func (m *Manager) Install(name string, opts InstallOptions) error {
 		return m.installHadolint(opts)
 	case "zizmor":
 		return m.installPythonPackageTool("zizmor", "zizmor", "zizmor", opts)
+	case "grype":
+		return m.installGrype(opts)
+	case "osv-scanner":
+		return m.installOSVScanner(opts)
+	case "govulncheck":
+		return m.installGovulncheck(opts)
+	case "actionlint":
+		return m.installActionlint(opts)
+	case "syft":
+		return m.installSyft(opts)
 	default:
 		t, ok := findTool(name)
 		if ok {
@@ -307,6 +312,150 @@ func (m *Manager) installHadolint(opts InstallOptions) error {
 		return fmt.Errorf("hadolint: no published binary for %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
 	return m.downloadBinary("hadolint", filepath.Base(dest), url, opts)
+}
+
+func (m *Manager) installGrype(opts InstallOptions) error {
+	dest := filepath.Join(m.BinDir, "grype")
+	if _, err := os.Stat(dest); err == nil && !opts.Force {
+		return m.recordBundledState("grype", "grype", "github")
+	}
+	p := DetectPlatform()
+	ver := opts.Version
+	if ver == "" {
+		v, err := m.latestRelease("anchore/grype")
+		if err != nil {
+			return err
+		}
+		ver = v
+	}
+	_, url, ok := p.GrypeAsset(ver)
+	if !ok {
+		return fmt.Errorf("grype: no published binary for %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	return m.downloadFromGitHub("grype", "grype", url, opts)
+}
+
+func (m *Manager) installOSVScanner(opts InstallOptions) error {
+	binary := "osv-scanner"
+	dest := filepath.Join(m.BinDir, binary)
+	if runtime.GOOS == "windows" {
+		dest += ".exe"
+		binary = "osv-scanner.exe"
+	}
+	if _, err := os.Stat(dest); err == nil && !opts.Force {
+		return m.recordBundledState("osv-scanner", filepath.Base(dest), "github")
+	}
+	p := DetectPlatform()
+	ver := opts.Version
+	if ver == "" {
+		v, err := m.latestRelease("google/osv-scanner")
+		if err != nil {
+			return err
+		}
+		ver = v
+	}
+	_, url, ok := p.OSVScannerAsset(ver)
+	if !ok {
+		return fmt.Errorf("osv-scanner: no published binary for %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	return m.downloadBinary("osv-scanner", filepath.Base(dest), url, opts)
+}
+
+func (m *Manager) installGovulncheck(opts InstallOptions) error {
+	binary := "govulncheck"
+	dest := filepath.Join(m.BinDir, binary)
+	if runtime.GOOS == "windows" {
+		dest += ".exe"
+		binary = "govulncheck.exe"
+	}
+	if _, err := os.Stat(dest); err == nil && !opts.Force {
+		return m.recordBundledState("govulncheck", filepath.Base(dest), "go")
+	}
+	module := "golang.org/x/vuln/cmd/govulncheck"
+	spec := module + "@latest"
+	if opts.Version != "" {
+		spec = module + "@" + opts.Version
+	}
+	return m.installGoModule("govulncheck", spec, filepath.Base(dest), opts)
+}
+
+func (m *Manager) installActionlint(opts InstallOptions) error {
+	binary := "actionlint"
+	dest := filepath.Join(m.BinDir, binary)
+	if runtime.GOOS == "windows" {
+		dest += ".exe"
+		binary = "actionlint.exe"
+	}
+	if _, err := os.Stat(dest); err == nil && !opts.Force {
+		return m.recordBundledState("actionlint", filepath.Base(dest), "go")
+	}
+	module := "github.com/rhysd/actionlint/cmd/actionlint"
+	spec := module + "@latest"
+	if opts.Version != "" {
+		spec = module + "@" + opts.Version
+	}
+	return m.installGoModule("actionlint", spec, filepath.Base(dest), opts)
+}
+
+func (m *Manager) installSyft(opts InstallOptions) error {
+	dest := filepath.Join(m.BinDir, "syft")
+	if _, err := os.Stat(dest); err == nil && !opts.Force {
+		return m.recordBundledState("syft", "syft", "github")
+	}
+	p := DetectPlatform()
+	ver := opts.Version
+	if ver == "" {
+		v, err := m.latestRelease("anchore/syft")
+		if err != nil {
+			return err
+		}
+		ver = v
+	}
+	_, url, ok := p.SyftAsset(ver)
+	if !ok {
+		return fmt.Errorf("syft: no published binary for %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	return m.downloadFromGitHub("syft", "syft", url, opts)
+}
+
+func (m *Manager) installGoModule(toolName, spec, destName string, opts InstallOptions) error {
+	if _, err := m.LookPath("go"); err != nil {
+		return fmt.Errorf("%s: go is required on PATH (install Go, then retry)", toolName)
+	}
+	goBin, err := m.resolveGoBin()
+	if err != nil {
+		return fmt.Errorf("%s: resolve go bin: %w", toolName, err)
+	}
+	if _, err := m.Exec("go", "install", spec); err != nil {
+		return fmt.Errorf("%s: go install: %w", toolName, err)
+	}
+	src := filepath.Join(goBin, destName)
+	if _, err := os.Stat(src); err != nil {
+		return fmt.Errorf("%s: expected binary at %s after go install: %w", toolName, src, err)
+	}
+	dest := filepath.Join(m.BinDir, destName)
+	if err := linkOrCopy(src, dest); err != nil {
+		return fmt.Errorf("%s: expose binary: %w", toolName, err)
+	}
+	return m.recordBundledState(toolName, destName, "go")
+}
+
+func (m *Manager) resolveGoBin() (string, error) {
+	out, err := m.Exec("go", "env", "GOBIN")
+	if err == nil {
+		if bin := strings.TrimSpace(string(out)); bin != "" {
+			return bin, nil
+		}
+	}
+	out, err = m.Exec("go", "env", "GOPATH")
+	if err != nil {
+		return "", err
+	}
+	gopath := strings.TrimSpace(string(out))
+	if gopath == "" {
+		return "", fmt.Errorf("empty GOPATH")
+	}
+	return filepath.Join(gopath, "bin"), nil
 }
 
 func (m *Manager) installPythonPackageTool(toolName, packageName, binary string, opts InstallOptions) error {

@@ -50,17 +50,7 @@ func newSbomCmd() *cobra.Command {
 			// Probe syft
 			syftStatus := tools.Probe("syft")
 			if !syftStatus.Installed {
-				t := tools.Tool{
-					Name: "syft",
-					Install: "curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin",
-				}
-				for _, tool := range tools.All() {
-					if tool.Name == "syft" {
-						t = tool
-						break
-					}
-				}
-				return fmt.Errorf("syft is not installed but required to generate SBOMs.\nInstall syft: %s", t.Install)
+				return fmt.Errorf("syft is not installed but required to generate SBOMs.\nInstall syft: %s", tools.InstallHint("syft"))
 			}
 
 			// Probe grype if enrich is requested

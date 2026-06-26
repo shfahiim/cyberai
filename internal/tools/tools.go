@@ -59,27 +59,27 @@ func All() []Tool {
 		{
 			Name: "grype", Binary: "grype",
 			Category: "sca",
-			Install:  "curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin",
+			Install:  "cyberai tools install grype",
 		},
 		{
 			Name: "osv-scanner", Binary: "osv-scanner",
 			Category: "sca",
-			Install:  "go install github.com/google/osv-scanner/cmd/osv-scanner@latest",
+			Install:  "cyberai tools install osv-scanner",
 		},
 		{
 			Name: "actionlint", Binary: "actionlint",
 			Category: "cicd",
-			Install:  "go install github.com/rhysd/actionlint/cmd/actionlint@latest OR brew install actionlint",
+			Install:  "cyberai tools install actionlint",
 		},
 		{
 			Name: "syft", Binary: "syft",
 			Category: "sbom",
-			Install:  "curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin",
+			Install:  "cyberai tools install syft",
 		},
 		{
 			Name: "govulncheck", Binary: "govulncheck",
 			Category: "sca",
-			Install:  "go install golang.org/x/vuln/cmd/govulncheck@latest",
+			Install:  "cyberai tools install govulncheck",
 		},
 	}
 }
@@ -188,4 +188,25 @@ func (s Status) String(name string) string {
 		return fmt.Sprintf("%s: missing", name)
 	}
 	return fmt.Sprintf("%s: installed (%s)", name, s.VersionLine())
+}
+
+// IsManagedInstall reports whether cyberai tools install can fetch the tool.
+func IsManagedInstall(name string) bool {
+	switch name {
+	case "semgrep", "gitleaks", "trivy", "checkov", "hadolint", "zizmor",
+		"grype", "osv-scanner", "govulncheck", "actionlint", "syft":
+		return true
+	default:
+		return false
+	}
+}
+
+// InstallHint returns the recommended install command for a tool name.
+func InstallHint(name string) string {
+	for _, t := range All() {
+		if t.Name == name {
+			return t.Install
+		}
+	}
+	return "cyberai tools install " + name
 }

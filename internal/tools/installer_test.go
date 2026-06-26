@@ -205,6 +205,51 @@ func TestPlatform_HadolintAsset_Linux(t *testing.T) {
 	}
 }
 
+func TestPlatform_GrypeAsset_Linux(t *testing.T) {
+	p := Platform{OS: "linux", Arch: "amd64", Ext: "tar.gz"}
+	name, url, ok := p.GrypeAsset("v0.83.0")
+	if !ok {
+		t.Fatal("expected ok=true for linux/amd64")
+	}
+	if name != "grype_0.83.0_linux_amd64.tar.gz" {
+		t.Errorf("filename = %q", name)
+	}
+	want := "https://github.com/anchore/grype/releases/download/v0.83.0/grype_0.83.0_linux_amd64.tar.gz"
+	if url != want {
+		t.Errorf("url = %q", url)
+	}
+}
+
+func TestPlatform_SyftAsset_Linux(t *testing.T) {
+	p := Platform{OS: "linux", Arch: "amd64", Ext: "tar.gz"}
+	name, url, ok := p.SyftAsset("v1.45.1")
+	if !ok {
+		t.Fatal("expected ok=true for linux/amd64")
+	}
+	if name != "syft_1.45.1_linux_amd64.tar.gz" {
+		t.Errorf("filename = %q", name)
+	}
+	want := "https://github.com/anchore/syft/releases/download/v1.45.1/syft_1.45.1_linux_amd64.tar.gz"
+	if url != want {
+		t.Errorf("url = %q", url)
+	}
+}
+
+func TestPlatform_OSVScannerAsset_Linux(t *testing.T) {
+	p := Platform{OS: "linux", Arch: "amd64", Ext: "tar.gz"}
+	name, url, ok := p.OSVScannerAsset("v2.4.0")
+	if !ok {
+		t.Fatal("expected ok=true for linux/amd64")
+	}
+	if name != "osv-scanner_linux_amd64" {
+		t.Errorf("filename = %q", name)
+	}
+	want := "https://github.com/google/osv-scanner/releases/download/v2.4.0/osv-scanner_linux_amd64"
+	if url != want {
+		t.Errorf("url = %q", url)
+	}
+}
+
 func TestPlatform_Asset_UnsupportedOS(t *testing.T) {
 	p := Platform{OS: "freebsd", Arch: "amd64", Ext: "tar.gz"}
 	if _, _, ok := p.GitleaksAsset("1.0.0"); ok {
@@ -432,6 +477,121 @@ func TestManager_InstallHadolint_Success(t *testing.T) {
 	}
 }
 
+func TestManager_InstallGrype_Success(t *testing.T) {
+	mgr, cli := newTestManager(t)
+	cli.setGHVersion(t, "anchore/grype", "v0.83.0")
+	p := DetectPlatform()
+	_, url, _ := p.GrypeAsset("v0.83.0")
+	cli.setAsset(t, url, makeTarGz(t, "grype", []byte("grype binary")))
+
+	if err := mgr.Install("grype", InstallOptions{}); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(mgr.BinDir, "grype")); err != nil {
+		t.Errorf("expected grype at bin dir: %v", err)
+	}
+}
+
+func TestManager_InstallOSVScanner_Success(t *testing.T) {
+	mgr, cli := newTestManager(t)
+	cli.setGHVersion(t, "google/osv-scanner", "v2.4.0")
+	p := DetectPlatform()
+	_, url, _ := p.OSVScannerAsset("v2.4.0")
+	cli.setAsset(t, url, []byte("osv-scanner binary"))
+
+	if err := mgr.Install("osv-scanner", InstallOptions{}); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(mgr.BinDir, "osv-scanner")); err != nil {
+		t.Errorf("expected osv-scanner at bin dir: %v", err)
+	}
+}
+
+func TestManager_InstallGovulncheck_Success(t *testing.T) {
+	mgr, _ := newTestManager(t)
+	goBin := filepath.Join(t.TempDir(), "gopath", "bin")
+	if err := os.MkdirAll(goBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mgr.LookPath = func(s string) (string, error) {
+		if s == "go" {
+			return "/usr/bin/go", nil
+		}
+		return "", &notFoundError{s: s}
+	}
+	mgr.Exec = func(name string, args ...string) ([]byte, error) {
+		if name == "go" && len(args) >= 2 && args[0] == "env" && args[1] == "GOBIN" {
+			return []byte("\n"), nil
+		}
+		if name == "go" && len(args) >= 2 && args[0] == "env" && args[1] == "GOPATH" {
+			return []byte(filepath.Dir(goBin) + "\n"), nil
+		}
+		if name == "go" && len(args) >= 1 && args[0] == "install" {
+			if err := os.WriteFile(filepath.Join(goBin, "govulncheck"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+				return nil, err
+			}
+			return []byte("ok\n"), nil
+		}
+		return []byte("govulncheck version\n"), nil
+	}
+	if err := mgr.Install("govulncheck", InstallOptions{}); err != nil {
+		t.Fatalf("Install govulncheck: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(mgr.BinDir, "govulncheck")); err != nil {
+		t.Errorf("expected govulncheck at bin dir: %v", err)
+	}
+}
+
+func TestManager_InstallSyft_Success(t *testing.T) {
+	mgr, cli := newTestManager(t)
+	cli.setGHVersion(t, "anchore/syft", "v1.45.1")
+	p := DetectPlatform()
+	_, url, _ := p.SyftAsset("v1.45.1")
+	cli.setAsset(t, url, makeTarGz(t, "syft", []byte("syft binary")))
+
+	if err := mgr.Install("syft", InstallOptions{}); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(mgr.BinDir, "syft")); err != nil {
+		t.Errorf("expected syft at bin dir: %v", err)
+	}
+}
+
+func TestManager_InstallActionlint_Success(t *testing.T) {
+	mgr, _ := newTestManager(t)
+	goBin := filepath.Join(t.TempDir(), "gopath", "bin")
+	if err := os.MkdirAll(goBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mgr.LookPath = func(s string) (string, error) {
+		if s == "go" {
+			return "/usr/bin/go", nil
+		}
+		return "", &notFoundError{s: s}
+	}
+	mgr.Exec = func(name string, args ...string) ([]byte, error) {
+		if name == "go" && len(args) >= 2 && args[0] == "env" && args[1] == "GOBIN" {
+			return []byte("\n"), nil
+		}
+		if name == "go" && len(args) >= 2 && args[0] == "env" && args[1] == "GOPATH" {
+			return []byte(filepath.Dir(goBin) + "\n"), nil
+		}
+		if name == "go" && len(args) >= 1 && args[0] == "install" {
+			if err := os.WriteFile(filepath.Join(goBin, "actionlint"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+				return nil, err
+			}
+			return []byte("ok\n"), nil
+		}
+		return []byte("actionlint version\n"), nil
+	}
+	if err := mgr.Install("actionlint", InstallOptions{}); err != nil {
+		t.Fatalf("Install actionlint: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(mgr.BinDir, "actionlint")); err != nil {
+		t.Errorf("expected actionlint at bin dir: %v", err)
+	}
+}
+
 func TestManager_InstallPythonPackageTool_ManagedVenv(t *testing.T) {
 	mgr, _ := newTestManager(t)
 	mgr.LookPath = func(s string) (string, error) {
@@ -653,13 +813,23 @@ func TestManager_Install_AllWhenEmptyName(t *testing.T) {
 	cli.setGHVersion(t, "gitleaks/gitleaks", "v8.30.1")
 	cli.setGHVersion(t, "aquasecurity/trivy", "v0.71.2")
 	cli.setGHVersion(t, "hadolint/hadolint", "v2.14.0")
+	cli.setGHVersion(t, "anchore/grype", "v0.83.0")
+	cli.setGHVersion(t, "google/osv-scanner", "v2.4.0")
+	cli.setGHVersion(t, "anchore/syft", "v1.45.1")
 	p := DetectPlatform()
 	_, gURL, _ := p.GitleaksAsset("v8.30.1")
 	_, tURL, _ := p.TrivyAsset("v0.71.2")
 	_, hURL, _ := p.HadolintAsset("v2.14.0")
+	_, grURL, _ := p.GrypeAsset("v0.83.0")
+	_, osvURL, _ := p.OSVScannerAsset("v2.4.0")
+	_, syftURL, _ := p.SyftAsset("v1.45.1")
 	cli.setAsset(t, gURL, makeTarGz(t, "gitleaks", []byte("g")))
 	cli.setAsset(t, tURL, makeTarGz(t, "trivy", []byte("t")))
 	cli.setAsset(t, hURL, []byte("h"))
+	cli.setAsset(t, grURL, makeTarGz(t, "grype", []byte("gr")))
+	cli.setAsset(t, osvURL, []byte("osv"))
+	cli.setAsset(t, syftURL, makeTarGz(t, "syft", []byte("syft")))
+	goBin := filepath.Join(t.TempDir(), "gopath", "bin")
 	// semgrep: not on PATH in the test manager → would fail; skip by
 	// making pipx available. Python is available for checkov/zizmor.
 	mgr.LookPath = func(s string) (string, error) {
@@ -668,10 +838,31 @@ func TestManager_Install_AllWhenEmptyName(t *testing.T) {
 			return "/usr/bin/pipx", nil
 		case "python3":
 			return "/usr/bin/python3", nil
+		case "go":
+			return "/usr/bin/go", nil
 		}
 		return "", &notFoundError{s: s}
 	}
 	mgr.Exec = func(name string, args ...string) ([]byte, error) {
+		if name == "go" && len(args) >= 2 && args[0] == "env" && args[1] == "GOBIN" {
+			return []byte("\n"), nil
+		}
+		if name == "go" && len(args) >= 2 && args[0] == "env" && args[1] == "GOPATH" {
+			return []byte(filepath.Dir(goBin) + "\n"), nil
+		}
+		if name == "go" && len(args) >= 1 && args[0] == "install" {
+			if err := os.MkdirAll(goBin, 0o755); err != nil {
+				return nil, err
+			}
+			binName := "govulncheck"
+			if len(args) >= 2 && strings.Contains(args[1], "actionlint") {
+				binName = "actionlint"
+			}
+			if err := os.WriteFile(filepath.Join(goBin, binName), []byte("#!/bin/sh\n"), 0o755); err != nil {
+				return nil, err
+			}
+			return []byte("ok\n"), nil
+		}
 		if len(args) >= 3 && args[0] == "-m" && args[1] == "venv" {
 			bin := filepath.Join(args[2], "bin")
 			if err := os.MkdirAll(bin, 0o755); err != nil {
@@ -697,7 +888,7 @@ func TestManager_Install_AllWhenEmptyName(t *testing.T) {
 	if err := mgr.Install("", InstallOptions{}); err != nil {
 		t.Fatalf("Install all: %v", err)
 	}
-	for _, name := range []string{"gitleaks", "trivy", "hadolint", "checkov", "zizmor"} {
+	for _, name := range []string{"gitleaks", "trivy", "hadolint", "checkov", "zizmor", "grype", "osv-scanner", "govulncheck", "actionlint", "syft"} {
 		if _, err := os.Stat(filepath.Join(mgr.BinDir, name)); err != nil {
 			t.Errorf("expected %s installed, got err=%v", name, err)
 		}
